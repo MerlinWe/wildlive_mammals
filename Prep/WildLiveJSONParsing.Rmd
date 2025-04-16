@@ -1,0 +1,376 @@
+---
+title: "**WildLive!** JSON Parsing"
+subtitle: 'Data preperation and processing'
+author:
+- name: "Merlin Weiss"
+  affiliation: "Department of Audiovisual Biodiversity Research, Senckenberg Institute for Natural Research, 60325 Frankfurt am Main, Germany" 
+output:
+  rmdformats::downcute:
+    code_folding: show
+    self_contained: TRUE
+    thumbnails: FALSE
+    lightbox: TRUE
+pkgdown:
+  as_is: true
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE, echo=FALSE, eval=FALSE}
+rm(list = ls()) # clean global environment
+knitr::opts_chunk$set(echo = TRUE)
+
+if(!require(exifr)){install.packages("exifr")} 
+if(!require(plyr)){install.packages("plyr")} 
+if(!require(forcats)){install.packages("forcats")}  
+if(!require(stringr)){install.packages("stringr")}  
+if(!require(tidyr)){install.packages("tidyr")}  
+if(!require(purrr)){install.packages("purrr")}  
+if(!require(googledrive)){install.packages("googledrive")}  
+if(!require(jsonlite)){install.packages("jsonlite")}  
+if(!require(tidyverse)){install.packages("tidyverse")}  
+
+setwd("/Users/serpent/Documents/Senckenberg/WildLive!/JSON Report") # set to folder
+load("/Users/serpent/Documents/Senckenberg/WildLive!/JSON Report/JSON Export 31-01-2024/json_workspace.RData") # load data 
+```
+
+# Introduction
+
+This report focuses on parsing the raw JSON file exportable from [Labelbox](https://app.labelbox.com/catalog). Camera trap images are uploaded to Labelbox, where citizen scientists assign species labels. The JSON file requires processing to generate a clean CSV file for subsequent analysis. The following report outlines this procedure and demonstrates the code implementation in R. Code visibility can be toggled using the option in the upper-right corner.
+
+## Data Used
+
+Any JSON export from Labelbox should be fit to run through the following pipelines. Here, we will use an [export from 31.01.2024](https://drive.google.com/file/d/1gwjL0hlL1gG10sRYIP393PSb4AASSQGC/view?usp=sharing) (including *all* available data settings from Labelbox). JSON (JavaScript Object Notation) is a lightweight and widely used data interchange format. JSON files organize data in a nested structure resembling objects and arrays. When exported from Labelbox, every row represents **one image** and the data associated with the labels are nested within each row. In the following, we will clean the JSON data and un-nest the data stepwise. The result will be a .CSV where every row is **one label**. This file can then be used to develop the species consensus.
+
+# Code Implementation
+
+## Work space
+
+We start by preparing our workspace. First we install or activate the required package libraries. To read the entire JSON file initially, adjust the subsequent code if the script is run multiple times on the same JSON export. For the first run, execute all lines **EXCEPT** the last one starting with `load()`. After the initial run, deactivate all lines except the last one starting with `load())` by adding `#` at the beginning, ensuring **ONLY** the last line runs, i.e., the `load()`. This procedure loads the R workspace including the read-in JSON instead of reading the JSON in manually (which takes much longer).
+
+```{r read JSON, echo=TRUE, eval=FALSE}
+# Load package libraries 
+if(!require(googledrive)){install.packages("googledrive")}  
+if(!require(exifr)){install.packages("exifr")} 
+if(!require(plyr)){install.packages("plyr")} 
+if(!require(forcats)){install.packages("forcats")}  
+if(!require(stringr)){install.packages("stringr")}  
+if(!require(tidyr)){install.packages("tidyr")}  
+if(!require(purrr)){install.packages("purrr")}  
+if(!require(jsonlite)){install.packages("jsonlite")}  
+if(!require(tidyverse)){install.packages("tidyverse")}  
+
+# Get JSON file form Google Drive (if needed)
+drive_deauth()
+drive_download(drive_get(as_id("1gwjL0hlL1gG10sRYIP393PSb4AASSQGC")), overwrite = TRUE)
+json_dat <- jsonlite::stream_in(file('Export v2 project - WildLIVE! Bolivien - 1 31 2024.ndjson'), verbose=F)
+
+## After the file was read into R Studio we can export the current workspace. 
+## This makes the next import much faster.
+dir <- getwd()
+save.image(paste0(dir, "/JSON Export 31-01-2024/json_workspace.RData")) # set absolute pathway
+
+## Load from workspace 
+load("/path/to/folder/JSON Export 31-01-2024/json_workspace.RData") # raw data 
+```
+
+## Preparatory data processing
+
+We will perform several preliminary steps on the entire dataset before focussing the labels for each image. The goal is to obtain a clean dataset that includes all data at the image level, with only label-specific information nested within.
+
+To run the pipeline, we need a few dependencies:
+
+-   A custom function to get rid of empty columns and columns containing empty lists
+-   A vector containing all available station names as found in the External IDs
+-   A vector containing all available camera names as found in the External IDs
+
+```{r depenancies one, echo=TRUE, eval=FALSE}
+# A function to remove empty data 
+remove_empty_columns <- function(json_dat) {
+	na_columns <- which(colSums(is.na(json_dat)) == nrow(json_dat))
+		empty_list_columns <- sapply(json_dat, function(col) all(lengths(col) == 0))
+		columns_to_remove <- c(na_columns, which(empty_list_columns))
+		json_dat <- json_dat[, -columns_to_remove]
+	return(json_dat)
+}
+# All station names 
+stations <- c("AS_CaminoCachuela", "AS_Jaguar", "AS_LaCachuela", "AS_LaCachuela_arriba", 
+							"AS_LaCachuela_CaminoCurichi", "AS_Lagarto", "AS_LajaDeNoviquia", 
+							"AS_Orquidia", "AS_Salitral", "AS_VacaMuerta", "CaminoCachuela", "Jaguar", 
+							"LaCachuelaArriba", "CaminoCurichi", "Lagarto", "LajaDeNoviquia", 
+							"Orquidia", "Salitral", "Vacamuerta", "Popo", "Quebrada", "nuevo-1", 
+							"nuevo-2", "nuevo-3", "nuevo-4", "Manantial", "NuevoManantial", 
+							"nuevo-5", "LaCruz", "VacaMuerta", "CaminoSur", "CaminoPrincipal", 
+							"CercaCachuela", "Cachuela2", "Noviquia2", "mario cachuela", "LaCachuela",
+							"mario_cachuela", "Provicional", "Curichi", "PIF", "G-01", "G-02", 
+							"G-03", "G-04", "G-05", "G-06", "G-07", "G-08", "G-09", "G-10", 
+							"G-11", "G-12", "G-13", "G-14", "G-15", "G-16", "G-17", "G-18", 
+							"G-19", "G-20", "G-21")
+# All camera names 
+cameras <- c("52", "97", "19", "82", "32", "41", "9", "10", "201_A", "201_B", 
+						 "201_C", "20", "93", "18", "23", "31", "48", "24", "25", "34", 
+						 "37", "101_A", "102_A", "102_B", "103_A", "103_B", "104_A", "104_B", 
+						 "104_C", "104_D", "105_A", "105_B", "106_A", "106_B", "28", "107_A", 
+						 "107_B", "108_A", "108_B", "109_A", "109_B", "110_A", "111_A", 
+						 "111_B", "112_A", "112_B", "113_A", "113_B", "52B", "101_B", 
+						 "115_A", "115_B", "116_A", "116_B", "117_A", "118_A", "118_B", 
+						 "119_A", "119_B", "120_A", "120_B", "121_A", "121_B", "110_B")
+```
+
+Now we run a pipe to carry out the following tasks:
+
+-   Flatten the JSON file (un-nest all columns that do not have multiple levels)
+-   Remove columns containing no data and empty lists
+-   Keep only relevant column (External ID, Link, nested Labels) with appropriate column names
+-   Remove PNG images (images extracted from video frames). This is done for several reasons: No timestamp can be retrieved from these images; they are mostly represent duplicates; they are only found at additional stations. The inclusion of the PNGs would make the parsing unnecessary complicated with little benefit to it, as these images can not be time-references and will likely not be included in the analysis (no grid-traps).
+-   Extract the Station and the Camera name. The extraction of the Station is straight forward, we check for matches in the External_ID and the `stations` vector created above. Extracting the cameras is more complicated and currently can only be done for grid traps (because the position of the camera name in the External_ID differs for the additional stations). Here, we use a pattern-based for loop to retrieve the camera information.
+
+```{r first pipe clean json, echo=TRUE, warning=FALSE, message=FALSE, eval=FALSE}
+json_dat <- json_dat %>% 
+	# Flatten JSON file to columns
+	jsonlite::flatten() %>%
+	# Remove empty columns and lists
+	remove_empty_columns() %>%
+	# Keep only relevant columns 
+	dplyr::select(data_row.external_id, 
+								data_row.row_data, 
+								projects.ck2ejmnleso5e0748arlwa18z.labels,
+								media_attributes.mime_type) %>%
+	# Set column names
+	dplyr::rename(External_ID = data_row.external_id) %>%
+	dplyr::rename(Link = data_row.row_data) %>%
+	dplyr::rename(Type = media_attributes.mime_type) %>%
+	dplyr::rename(Labels = projects.ck2ejmnleso5e0748arlwa18z.labels) %>%
+	# Extract Station ID 
+	filter(!grepl("EK", External_ID)) %>%
+	mutate(Station = map_chr(External_ID, ~ stations[str_detect(.x, stations)])) %>%
+	# Exclude PNG (video frames) 
+	filter(Type == "image/jpeg") %>%
+	dplyr::select(-Type)
+
+# PIF Stations are a special case, we need to extract the PIF station number in a separate step: 
+json_dat <- json_dat %>%
+	mutate(
+		Station = case_when(
+			str_detect(External_ID, "PIF01|PIF001|PIF_01|PIF_001") ~ "PIF01",
+			str_detect(External_ID, "PIF02|PIF002|PIF_02|PIF_002") ~ "PIF02",
+			str_detect(External_ID, "PIF03|PIF003|PIF_03|PIF_003") ~ "PIF03",
+			str_detect(External_ID, "PIF04|PIF004|PIF_04|PIF_004") ~ "PIF04",
+			str_detect(External_ID, "PIF05|PIF005|PIF_05|PIF_005") ~ "PIF05",
+			str_detect(External_ID, "PIF06|PIF006|PIF_06|PIF_006") ~ "PIF06",
+			str_detect(External_ID, "PIF07|PIF007|PIF_07|PIF_007") ~ "PIF07",
+			str_detect(External_ID, "PIF08|PIF008|PIF_08|PIF_008") ~ "PIF08",
+			str_detect(External_ID, "PIF09|PIF009|PIF_09|PIF_009") ~ "PIF09",
+			str_detect(External_ID, "PIF10|PIF010|PIF_10|PIF_010") ~ "PIF10",
+			TRUE ~ Station))
+
+# Extract Cameras 
+cams <- json_dat %>% 
+	# Only grid traps
+	filter(Station %in% stations[grep("^G", stations)]) %>%
+	# Keep only External_ID
+	dplyr::select(1) %>%
+	# Set format 
+	as_tibble()
+
+# Iterate through camera values and find matches 
+cams$Camera <- NA
+for (i in 1:length(cameras)) {
+	pattern <- paste(cameras[i], collapse = "|")  # Create a pattern for matching
+	matches <- grepl(pattern, cams$External_ID, ignore.case = TRUE)  # Find matches
+	cams$Camera[matches] <- cameras[i]  # Store the matching 'camera' value in 'test' column
+}
+
+# Add Camera ID to data 
+json_dat <- json_dat %>%
+	left_join(cams, by = "External_ID") %>%
+	distinct() %>% 
+	dplyr::select(External_ID, Link, Station, Camera, Labels)
+```
+
+```{r clean environment 1, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+rm(cams, cameras, i, matches, pattern, stations, remove_empty_columns, remove_na_columns, dir)
+```
+
+The output gives us the Link, Station, and Camera for every External_ID and contains the label data in a nested column called `Labels`.
+
+## Un-nesting label data
+
+In the following, we will step-wise un-nest all data associated with the labels. The resulting data frame will be at the level of **bounding boxes**, i.e., every row will be **one bounding box**. The following pipeline does the following tasks (but may take very long to run, about 2h depending on the device):
+
+-   Un-nest and flatten the first level of label data, which contains label creation data, the nested *label object* (bounding box information), the seconds it took to create the label, the consensus score of the label within the image (where multiple labels are created), the nested *review* *data* (if applicable), the seconds it took to review a label (if applicable), and the nested image *metadata* (i.e., quality and comments)
+-   Un-nest the label *object* (next level) to retrieve the bounding box information and the associated information (coordinates and species classification in trivial names)
+-   Un-nest the *review data* (next level) and assign "Approved" whenever a label was reviewed (with approval) at least once, but NOT when at least one reviewer disapproved (if applicable).
+-   Un-nest the *image metadata* to get the Quality of the image (blurry, clear, etc.) and any comments (top ten, needs review, etc.)
+-   Count the number of individuals of a single species on an image (separately for labels of every citizen scientist)
+
+```{r second pipe unnest labels, echo=TRUE, message=FALSE, warning=FALSE, eval=FALSE}
+json_dat <- json_dat %>%
+	# Un-nest and flatten the label lists
+	unnest_longer(Labels) %>%
+	jsonlite::flatten() %>%
+	# Keep only relevant columns
+	dplyr::select(External_ID, Link, Station, Camera, 
+				 Labels.label_details.created_at,
+				 Labels.label_details.created_by,
+				 Labels.annotations.objects,
+				 Labels.performance_details.seconds_to_create,
+				 Labels.performance_details.consensus_score,
+				 Labels.label_details.reviews,
+				 Labels.performance_details.seconds_to_review,
+				 Labels.annotations.classifications) %>%
+	# Rename relevant columns
+	rename(Label_Created_At = Labels.label_details.created_at) %>%
+	rename(Label_Created_By = Labels.label_details.created_by) %>%
+	rename(Object = Labels.annotations.objects) %>%
+	rename(Seconds_To_Label = Labels.performance_details.seconds_to_create) %>%
+	rename(Consensus_Score = Labels.performance_details.consensus_score) %>%
+	rename(Label_Review = Labels.label_details.reviews) %>%
+	rename(Seconds_To_Review = Labels.performance_details.seconds_to_review) %>%
+	rename(Classification = Labels.annotations.classifications) %>%
+	# Set dat format where needed
+	mutate(Label_Created_At = as.POSIXct(Label_Created_At, format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")) %>%
+	# Un-nest the object (which contains the bounding box information)
+	unnest_wider(Object) %>%
+	select(-feature_id, -feature_schema_id, -name, -value) %>%
+	# Drop empty images (where there is no bounding box)
+	filter(!is.na(annotation_kind)) %>%
+	dplyr::select(-annotation_kind) %>%
+	# Un-nest bounding box to get data to bounding box level 
+	unnest_longer(col = c(classifications, bounding_box)) %>%
+	# NOTE! Now every row is ONE label 
+	# Un-nest classification & bounding box 
+	unnest_wider(classifications) %>%
+	unnest_wider(bounding_box) %>%
+	# Drop non-relevant columns and empty rows 
+	dplyr::select(-feature_id, -feature_schema_id, -name, -radio_answer) %>%
+	rename(Category = value) %>%
+	filter(!is.na(Category)) %>%
+	# Un-nest cases where bounding boxes meet multiple categories are true (i.e., cattle & others)
+	unnest_longer(c(Category, checklist_answers)) %>%
+	# Un-nest classification
+	unnest_wider(checklist_answers) %>%
+	dplyr::select(-feature_id, -feature_schema_id, -name, -classifications) %>%
+	rename(Trivial = value) %>%
+	unnest(Trivial) %>% 
+	# Remove duplicates due to bounding boxes meeting multiple categories
+	distinct(across(-Category), .keep_all = TRUE) %>%
+	# Un-nest review information 
+	unnest_wider(Label_Review) %>%
+	# Drop non-relevant columns 
+	dplyr::select(-reviewed_at, -reviewed_by) %>%
+	# Set Review column to "Approved" where appropriate
+	rename(Review = review_action) %>%
+	mutate(Review = ifelse(sapply(Review, function(x) any(x == "Approve")), "Approved", NA)) %>%
+	# Un-nest classification (image comment and quality)
+	filter(as.character(lapply(Classification, class)) != "list") %>%
+	unnest_longer(Classification) %>%
+	unnest_wider(Classification) %>%
+	dplyr::select(-feature_id, -feature_schema_id, -name, -value) %>%
+	unnest_wider(radio_answer) %>%
+	dplyr::select(-feature_id, -feature_schema_id, -name, -classifications) %>%
+	rename(Quality = value) %>%
+	unnest_longer(checklist_answers) %>%
+	unnest_wider(checklist_answers) %>%
+	dplyr::select(-feature_id, -feature_schema_id, -name, -classifications) %>%
+	rename(Comment = value) %>%
+	unnest_wider(Comment, names_sep = "_") %>%
+	group_by(External_ID) %>%
+	fill(Quality, starts_with("Comment"), .direction = "up") %>%
+	ungroup() %>%
+	# Make sure no duplicates occurred due to comments or quality
+	distinct(across(-c(starts_with("Comment"), Quality)), .keep_all = TRUE) %>%
+	# Note: At this point the data contains all information on bounding box data!
+	# We write this file to go back to if we are interested in the bounding boxes. 
+	write_csv(file = "wildlive_bounding_boxes.csv") %>%
+	# Next we deal with multiple individuals of the same species in the same image and reduce 
+	# our data to species occurrences per label, i.e., one row is one species per image suggested by a label.
+	# We first count the number of bounding boxes of the same species per image per citizen scientist. 
+	add_count(External_ID, Trivial, Label_Created_By, name = "N_Individuals") %>%
+	# We then remove all columns that are at the level of a bounding box 
+	dplyr::select(-Label_Created_At, -top, -left, -height, -width, -Seconds_To_Label, -Consensus_Score,
+								-Seconds_To_Review, -Quality, -c(starts_with("Comment"))) %>%
+	# Lastly, we keep only distinct rows to remove duplicates caused my multiple individuals of the same species 
+	distinct()
+```
+
+## Adding scientific nomenclature
+
+Note that the labels created by Citizen Scientists use trivial species names. A supplementary [CSV with taxonomic names](https://drive.google.com/file/d/1h1yR-oWSui2iqu2B-fUSX0GSsS0POGFL/view?usp=sharing) is available to match the trivial names with the corresponding scientific nomenclature.
+
+```{r sci names, echo=TRUE, include=TRUE, warning=FALSE, message=FALSE, eval=FALSE}
+# Access scientific name data
+drive_download(drive_get(as_id("1h1yR-oWSui2iqu2B-fUSX0GSsS0POGFL")), overwrite = TRUE) 
+sci_names <- read_csv("names_tax.csv") 
+
+json_dat <- json_dat %>%
+	# Add scientific nomenclature  
+  left_join(sci_names, by = "Trivial") %>%
+	# Set column order
+	dplyr::select(External_ID, Link, Station, Camera, Label_Created_By, 
+								Category, Family, Genus, Species, Trivial, N_Individuals, Review)
+```
+
+```{r clean environment 2, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
+rm(cams, cameras, dir, i, matches, pattern, stations, remove_empty_columns, sci_names)
+```
+
+## Reading the image timestamps
+
+Next, we will read the EXIF metadata using `exifr` to retrieve the timestamp of all images in out JSON database. This only works on the digital images stored on a local space. A hard drive is recommended. If the images are downloaded for the first time, we can use a loop to download every image via its link and store it using the respective External ID. Note that this takes *very* long (up to 30 hours).
+
+```{r exif all, echo=TRUE, eval=FALSE, warning=FALSE, message=FALSE}
+# Set working directory to an External Drive 
+setwd("path/to/External Drive/Wildive Photos")
+
+# Get distinct Exteral_IDs and Links 
+all_links <- json_dat %>%
+	distinct(External_ID, .keep_all = TRUE) %>%
+	select(External_ID, Link)
+
+## Loop to download photos and assign External ID's 
+lapply(seq_along(all_links$Link), function(i)
+  tryCatch(download.file(all_links$Link[i], all_links$External_ID[i]),
+  error = function(e) message("error occured")))
+
+# Read EXIF metadata of downloaded images 
+images <- read_exif(list.files(pattern = "*.JPG"), tags = c("FileName", "DateTimeOriginal"))
+images <- images %>% 
+	mutate(DateTimeOriginal = as.POSIXct(DateTimeOriginal, format = "%Y:%m:%d %H:%M:%S")) %>%
+	rename(External_ID = SourceFile)
+
+# Add Timestamps to JSON data 
+json_dat <- json_dat %>%
+	left_join(new_images, by = "External_ID")
+```
+
+If the database should only be updated, i.e., a smaller number of novel images added, then we do not need to download all images again. Instead, we just download images that are not already found on our hard drive:
+
+```{r exif new, echo=TRUE, eval=FALSE, warning=FALSE, message=FALSE}
+# Get links of new images 
+new_images <- json_dat %>% 
+	filter(!(External_ID %in% list.files(path = "path/to/External Drive/Wildive Photos", full.names = FALSE))) %>% 
+	distinct(External_ID, .keep_all = TRUE) %>% 
+	dplyr::select(External_ID, Link)
+
+# Set download location
+setwd("path/to/External Drive/Wildive Photos") 
+
+# Initiate download loop 
+lapply(seq_along(new_images$Link), function(i)
+	tryCatch(download.file(new_images$Link[i], new_images$External_ID[i]),
+					 error = function(e) message("error occured")))														
+
+# Read EXIF metadata
+new_images <- read_exif(list.files(pattern = "*.JPG"), tags = c("DateTimeOriginal"))
+new_images <- new_images %>%
+	mutate(DateTimeOriginal = as.POSIXct(DateTimeOriginal, format = "%Y:%m:%d %H:%M:%S")) %>%
+	rename(External_ID = SourceFile)
+
+# Add timestamp to JSON data base 
+json_dat <- json_dat %>%
+	left_join(new_images, by = "External_ID") %>%
+	arrange(DateTimeOriginal)
+```
+
+# Output
+
+In the resulting file, one row is one species occurrence labelled by one citizen scientist in one image. When interested in the bounding boxes, [this](https://drive.google.com/file/d/1h25CwjH1aSzOU8SQ_vuW_EqS0cSi8l2X/view?usp=sharing) file should be used (the state after the first `read_csv()` command in the previous pipe). The [final file](https://drive.google.com/file/d/1h6kbFcTRuywXxBgbwE0ztRtsFPrZPpGt/view?usp=sharing) of the entire pipeline can be used to develop the [species consensus](link3).
