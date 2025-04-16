@@ -7,21 +7,34 @@ library(spOccupancy)
 library(broom)
 library(scales)
 
+# read input data
+species <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
+camtraps <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
+camop <- as.matrix(read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camop_problem.csv"))
+covariates <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/covariates.csv")
 
-species <- read_csv()
-camtraps <- read_csv("/Users/serpent/Desktop/Paper/camtraps_clean.csv")
-camop <- as.matrix(read_csv("/Users/serpent/Desktop/Paper/camop_problem.csv"))
-covariates <- read_csv("/Users/serpent/Desktop/Paper/covariates.csv")
-
+# clean species data for analysis
 species <- species %>%
 	filter(Station %in% camtraps$Station) %>%
 	filter(Category %in% c("artiodactyla", "carnivora", "marsupialia", "perissodactyla", "primates", "rodentia", "xenarthra")) %>%
 	filter(DateTimeOriginal >= "2017-01-10 17:01:26") %>%
-	filter(DateTimeOriginal <= "2023-10-18 06:32:56")
+	filter(DateTimeOriginal <= "2023-10-18 06:32:56") %>%
+	
+	mutate(
+		Station = as.character(Station),
+		accepted_bin = paste(Genus, Species, sep = "_"),
+		accepted_bin = str_to_lower(str_replace_all(accepted_bin, " ", "_")),
+		accepted_bin = str_replace_all(accepted_bin, "\\.", "_"),
+		accepted_bin = str_replace_all(accepted_bin, "\\-", "_"),
+		accepted_bin = str_replace_all(accepted_bin, "\\(", ""),
+		accepted_bin = str_replace_all(accepted_bin, "\\)", ""),
+		accepted_bin = str_replace_all(accepted_bin, "\\/", "_")
+	) %>%
+	select(-Batch)
 
 # Integrate pantheria traits, see which traits predict which response
 pantheria <- read.table(
-	file = "/Users/serpent/Documents/MSc/Computational Methods in Biodiversity Research (BIOS0002)/Data Science (Lectures)/PanTHERIA (W2)/PanTHERIA_1-0_WR05_Aug2008.txt",
+	file = "/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/PanTHERIA.txt",
 	header = TRUE, sep = "\t", na.strings = c("-999", "-999.00")) %>%
 	as_tibble() %>%
 	select(
@@ -54,9 +67,10 @@ species_traits <- pantheria %>%
 				 terrestriality, trophic_level)
 
 
-# Analysis 
+# ========= Occupancy Analysis =========
 
 create_detection_array <- function(species_data, species_min = 10, K = 12) {
+	
 	library(dplyr)
 	library(tidyr)
 	library(lubridate)
@@ -66,14 +80,14 @@ create_detection_array <- function(species_data, species_min = 10, K = 12) {
 					 year = year(Date),
 					 site_year = paste(Station, year, sep = "_"))
 	
-	# Step 1: Count total detections per species
+	# Count total detections per species
 	species_counts <- species_data %>%
 		count(accepted_bin) %>%
 		dplyr::filter(n >= 10)
 	
 	species_list <- species_counts$accepted_bin
 	
-	# Step 2: Filter to valid species
+	# Filter to valid species
 	species_data <- species_data %>%
 		filter(accepted_bin %in% species_list)
 	
@@ -128,10 +142,10 @@ site_covs <- covariates %>%
 	select(treecover_z, aggregation_z, agriculture) %>%
 	as.data.frame()
 
-# FIXED: match rownames to the new site_years
+# match rownames to the new site_years
 rownames(site_covs) <- site_years
 
-# Optional checks (should return TRUE)
+# make sure things match - should return TRUE
 nrow(site_covs) == dim(detection_array)[2]
 all.equal(rownames(site_covs), dimnames(detection_array)[[2]])
 
@@ -161,6 +175,7 @@ summary(ms_model, level = 'community')
 summary(ms_model, level = 'species')
 summary(ms_model, level = "community")$beta.comm
 summary(ms_model, level = "species")$beta
+
 psi <- fitted(ms_model)
 
 # Extract posterior summary stats for coefficients
@@ -302,16 +317,14 @@ traits_agriculture <- results %>%
 effects_plot <- (comm_plot | traits_treecover) /
 	(traits_fragmentation | traits_agriculture)
 
-ggsave("/Users/serpent/Desktop/Paper/traits_effects.png", 
+ggsave("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig2.png", 
 			 effects_plot, 
 			 width = 180,
 			 height = 160, 
 			 units = "mm",
 			 dpi = 600)
 
-
-
-## PDP analyis
+## ========== PDP Analysis ==========
 
 # Define covariate sequences
 tree_seq <- seq(-2, 2, length.out = 100)
@@ -406,14 +419,12 @@ pdp_focal_plot <- ggplot(pdp_focal_all, aes(x = value, y = mean, ymin = lower, y
 		text = element_text(size = 11)
 	)
 
-ggsave("/Users/serpent/Desktop/Paper/pdp_focal.png", 
+ggsave("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig3.png", 
 			 pdp_focal_plot, 
 			 width = 180,
 			 height = 180, 
 			 units = "mm",
 			 dpi = 600)
-
-
 
 # Generate PDPs for ALL species (for supplementary)
 all_ids <- seq_along(species_names)
@@ -445,7 +456,7 @@ pdp_all_plot <- ggplot(pdp_all, aes(x = value, y = mean, ymin = lower, ymax = up
 	geom_line() +
 	scale_fill_viridis_d(end = .8) +
 	scale_colour_viridis_d(end = .8) +
-	facet_wrap(~ facet_label, nrow = 9, ncol = 7, scales = "free") +  # Adjust nrow to fit your figure size
+	facet_wrap(~ facet_label, nrow = 9, ncol = 7, scales = "free") +  
 	labs(
 		x = "Covariate value", y = "Predicted occupancy probability"
 	) +
@@ -457,7 +468,7 @@ pdp_all_plot <- ggplot(pdp_all, aes(x = value, y = mean, ymin = lower, ymax = up
 		panel.spacing = unit(0.2, "lines"),
 		legend.position = "none")
 
-ggsave("/Users/serpent/Desktop/Paper/pdp_all.png", 
+ggsave("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/pdp_all.png", 
 			 pdp_all_plot, 
 			 width = 270,
 			 height = 320, 
@@ -496,7 +507,7 @@ trait_table_wide <- trait_table %>%
 	) %>%
 	relocate(Trait)
 
-write_csv(trait_table_wide, "/Users/serpent/Desktop/Paper/trait_table.csv")
+write_csv(trait_table_wide, "/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/traits_table.csv")
 
 
 ##### More tables #####
@@ -517,19 +528,19 @@ trait_table <- coef_traits %>%
 		`Habitat Breadth`     = habitat_breadth_coded
 	)
 
-write_csv(trait_table, "/Users/serpent/Desktop/Paper/trait_table.csv")
+write_csv(trait_table, "/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/traits_summary.csv")
 
 
+# ========== Model Diagnostics ==========
 
-# diagnostics
-# 1. Extract Rhat and ESS as named vectors
+# Extract Rhat and ESS as named vectors
 rhat_vec <- ms_model$rhat$beta
 ess_vec  <- ms_model$ESS$beta
 
 length(rhat_vec)
 names(rhat_vec)[1:5]
 
-# 2. Build a dataframe from the beta samples summary
+# Build a tibble from the beta samples summary
 beta_df <- as.data.frame(summary(beta_samples)$statistics) %>%
 	rownames_to_column("param") %>%
 	filter(str_detect(param, "^(treecover_z|aggregation_z|agriculture)-")) %>%
@@ -539,13 +550,13 @@ beta_df <- as.data.frame(summary(beta_samples)$statistics) %>%
 		species     = tools::toTitleCase(gsub("_", " ", species_raw))
 	)
 
-# 3. Turn diagnostics into a dataframe with param names
+# Turn diagnostics into a df with param names
 param_names <- beta_df$param
 
 rhat_filtered <- rhat_vec[param_names]
 ess_filtered  <- ess_vec[param_names]
 
-length(rhat_filtered) == nrow(beta_df)  # should now be TRUE
+length(rhat_filtered) == nrow(beta_df)  # should  be TRUE
 
 diagnostics_table <- beta_df %>%
 	mutate(
@@ -582,4 +593,7 @@ diagnostics_clean <- diagnostics_table %>%
 	) %>%
 	select(-Converged, -ESS_gt_1000)
 
-write_csv(diagnostics_clean, "/Users/serpent/Desktop/Paper/diagnostics_table.csv")
+write_csv(diagnostics_clean, "/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/model_diagnostics.csv")
+
+# ===== END =====
+
