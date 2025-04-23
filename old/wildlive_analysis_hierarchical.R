@@ -15,7 +15,7 @@ library(tidyverse)
 species <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
 camtraps <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
 camop <- as.matrix(read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camop_problem.csv"))
-covariates <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/forest_covariates.csv")
+covariates <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/covariates.csv")
 
 # ========= Data Preparation ==========
 
@@ -139,17 +139,17 @@ site_years <- dimnames(detection_array)[[2]]
 
 site_covs <- covariates %>%
 	mutate(site_year = paste(station, year, sep = "_")) %>%
-	filter(site_year %in% dimnames(detection_array)[[2]]) %>%
+	filter(site_year %in% site_years) %>%
 	mutate(
-		treecover_z = scale(treecover)[,1],
-		edge_density_z = scale(edge_density_forest)[,1],
-		patch_density_z = scale(patch_density_forest)[,1]
+		treecover_z = as.numeric(scale(treecover)),
+		aggregation_z = as.numeric(scale(aggregation_forest))
 	) %>%
-	arrange(match(site_year, dimnames(detection_array)[[2]])) %>%  # <- sort to match detection_array
-	select(treecover_z, edge_density_z, patch_density_z) %>%
+	arrange(match(site_year, site_years)) %>%
+	select(treecover_z, aggregation_z, agriculture) %>%
 	as.data.frame()
 
-rownames(site_covs) <- dimnames(detection_array)[[2]]
+# match rownames to the new site_years
+rownames(site_covs) <- site_years
 
 # make sure things match - should return TRUE
 nrow(site_covs) == dim(detection_array)[2]
@@ -162,11 +162,9 @@ any(is.na(detection_array))  # Should return FALSE
 # name months dimension 
 dimnames(detection_array)[[3]] <- paste0("Month", 1:dim(detection_array)[3])
 
-## Find best fragmentation metric with additive models, then see if we need an interaction: 
-
-# Fit the model with edge density
-ms_model_edge <- msPGOcc(
-	occ.formula = ~ treecover_z + edge_density_z,
+# Fit the model
+ms_model <- msPGOcc(
+	occ.formula = ~ treecover_z + aggregation_z + agriculture,
 	det.formula = ~ 1,
 	data = list(
 		y = detection_array,
@@ -178,89 +176,13 @@ ms_model_edge <- msPGOcc(
 	n.chains = 3,
 	verbose = TRUE
 )
-
-# Fit the model with patch density
-ms_model_patch <- msPGOcc(
-	occ.formula = ~ treecover_z + patch_density_z,
-	det.formula = ~ 1,
-	data = list(
-		y = detection_array,
-		occ.covs = site_covs
-	),
-	n.samples = 15000,
-	n.burn = 2000,
-	n.thin = 10,
-	n.chains = 3,
-	verbose = TRUE
-)
-
-# See which model is best 
-waic_edge <- spOccupancy::waicOcc(ms_model_edge)
-waic_patch <- spOccupancy::waicOcc(ms_model_patch)
-
-waic_edge["WAIC"]
-waic_patch["WAIC"]
-waic_patch["WAIC"] - waic_edge["WAIC"]
-
-# A ΔWAIC of > 10 is strong evidence that the model with treecover_z + edge_density_z is better than the one with patch density. 
-
-## ----- Check if we need an interaction term -----
-
-ms_model_edge_interaction <- msPGOcc(
-	occ.formula = ~ treecover_z * edge_density_z,
-	det.formula = ~ 1,
-	data = list(
-		y = detection_array,
-		occ.covs = site_covs
-	),
-	n.samples = 15000,
-	n.burn = 2000,
-	n.thin = 10,
-	n.chains = 3,
-	verbose = TRUE
-)
-
-waic_edge_interaction <- spOccupancy::waicOcc(ms_model_edge_interaction)
-
-# Compare models
-waic_edge_interaction["WAIC"] - waic_edge["WAIC"]
-
-# The interaction model is worse by over 8 WAIC points than the additive model. 
-# That’s strong support to drop the interaction between treecover_z and edge_density_z.
-# We have strong model selection evidence that the interaction term is not improving the model sufficiently.
-# We drop it for parsimony.
-
-rm(ms_model_edge_interaction, ms_model_patch) # remove bad models
-ms_model <- ms_model_edge
 
 summary(ms_model, level = 'community')
 summary(ms_model, level = 'species')
 summary(ms_model, level = "community")$beta.comm
 summary(ms_model, level = "species")$beta
+
 psi <- fitted(ms_model)
-
-# Interpretation:
-# •	Tree cover has a moderate positive effect on occupancy across the community. The 95% CI just includes zero (i.e. borderline support), but the posterior median is clearly positive.
-# •	Edge density also has a positive effect, but with more uncertainty and a wider CI crossing zero more comfortably.
-
-# Caveats:
-# •	Neither covariate is definitively “significant” in a classical p-value sense but Bayesian models don’t rely on that.
-# •	Instead, we focus on effect size magnitudes and the directional consistency across species.
-
-# Tree Cover (treecover_z):
-# •	Strong positive responders: Panthera onca, Tapirus terrestris, Myrmecophaga tridactyla, Dasyprocta, Mazama gouazoubira
-# •	Neutral or weak effects for many others, but very few show negative trends.
-
-# Edge Density (edge_density_z):
-# •	Strong positive: Tayassu pecari, Sciurus ignitus, Didelphis marsupialis
-# •	Negative: Cerdocyon thous, Panthera onca, Leopardus pardalis (but all with wide CIs)
-
-# These trends hint that some species may prefer fragmented edges or tolerate them, while others might be sensitive to fragmentation even when forest cover is high.
-
-# •	Variability in response to edge density is nearly double that for tree cover.
-# •	This suggests species differ more in how they respond to fragmentation than to raw forest amount — strong motivation for trait filtering
-
-# But big variation in detection probability across species — e.g., Mazama gouazoubira has high detectability, Hydrochoerus and Puma yagouaroundi low. That’s fine.
 
 # Extract posterior summary stats for coefficients
 beta_samples <- ms_model$beta.samples
@@ -278,23 +200,26 @@ coef_traits <- ms_model$beta.samples %>%
 	} %>%
 	rownames_to_column("term") %>%
 	separate(term, into = c("covariate", "species"), sep = "-", extra = "merge") %>%
-	filter(covariate %in% c("treecover_z", "edge_density_z")) %>%
+	filter(covariate %in% c("treecover_z", "aggregation_z", "agriculture")) %>%
 	left_join(species_traits, by = c("species" = "accepted_bin")) %>%
 	mutate(
 		log_mass = log(adult_body_mass_g),
 		log_range = log(home_range_km2),
 		diet_breadth = as.numeric(diet_breadth),
+		# Recode activity cycle: 1 = nocturnal, 2 = diurnal, 3 = cathemeral
 		activity_cycle_coded = recode(activity_cycle, `1` = -1, `3` = 0, `2` = 1),
+		# Recode habitat breadth: 1 = specialist, 2 = intermediate, 3 = generalist (rescaled to -1 to 1)
 		habitat_breadth_coded = rescale(habitat_breadth, to = c(-1, 1))
 	) %>%
 	select(covariate, species, Mean, `2.5%`, `97.5%`,
 				 log_mass, log_range, diet_breadth,
 				 activity_cycle_coded, habitat_breadth_coded)
 
-# Run trait ~ coefficient regressions across covariates
+# Define traits to test
 trait_vars <- c("log_mass", "log_range", "diet_breadth",
 								"activity_cycle_coded", "habitat_breadth_coded")
 
+# Run trait ~ coefficient regressions across covariates
 results <- map_dfr(unique(coef_traits$covariate), function(cov) {
 	dat <- coef_traits %>% filter(covariate == cov)
 	
@@ -317,10 +242,9 @@ results <- results %>%
 												"activity_cycle_coded" = "Diurnality",
 												"habitat_breadth_coded" = "Habitat breadth"))
 
-results$covariate <- factor(results$covariate,
-														levels = c("treecover_z", "edge_density_z"))
+results$covariate <- factor(results$covariate, levels = c("agriculture", "treecover_z", "aggregation_z"))
 
-# Update the community-level effect plot as well
+
 beta_comm <- ms_model$beta.comm.samples %>%
 	summary() %>%
 	{
@@ -332,11 +256,11 @@ beta_comm <- ms_model$beta.comm.samples %>%
 	rownames_to_column("term") %>%
 	filter(term != "(Intercept)") %>%
 	mutate(term = recode(term,
-											 "edge_density_z" = "Edge Density",
+											 "aggregation_z" = "Fragmentation",
+											 "agriculture" = "Agriculture",
 											 "treecover_z" = "Forestcover"))
 
-beta_comm$term <- factor(beta_comm$term,
-												 levels = c("Forestcover", "Edge Density"))
+beta_comm$term <- factor(beta_comm$term, levels = c("Agriculture", "Forestcover", "Fragmentation"))
 
 # Community level plot 
 comm_plot <- ggplot(beta_comm, aes(x = term, y = Mean, ymin = `2.5%`, ymax = `97.5%`)) +
@@ -359,7 +283,7 @@ traits_treecover <- results %>%
 	geom_hline(yintercept = 0, linetype = "dashed") +
 	geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
 	scale_color_viridis_d() +
-	labs(title = "(b.) Trait responses - Forest Cover", 
+	labs(title = "(b.) Trait responses - Forestcover", 
 			 x = NULL, y = "Effect size (slope estimate ± SE)") +
 	theme_bw() +
 	theme(axis.text.x = element_text(angle = 45, hjust = 1),
@@ -367,26 +291,42 @@ traits_treecover <- results %>%
 				legend.position = "none")
 
 traits_fragmentation <- results %>%
-	filter(covariate == "edge_density_z") %>%
+	filter(covariate == "aggregation_z") %>%
 	ggplot(aes(x = trait, y = estimate, 
 						 ymin = estimate - std.error, ymax = estimate + std.error,
 						 color = trait)) +
 	geom_hline(yintercept = 0, linetype = "dashed") +
 	geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
 	scale_color_viridis_d() +
-	labs(title = "(c.) Trait responses - Edge Density", 
+	labs(title = "(c.) Trait responses - Fragmentation", 
 			 x = NULL, y = "Effect size (slope estimate ± SE)") +
 	theme_bw() +
 	theme(axis.text.x = element_text(angle = 45, hjust = 1),
 				text = element_text(size = 10),
 				legend.position = "none")
 
-effects_plot <- (comm_plot) / (traits_treecover) / (traits_fragmentation) 
+traits_agriculture <- results %>%
+	filter(covariate == "agriculture") %>%
+	ggplot(aes(x = trait, y = estimate, 
+						 ymin = estimate - std.error, ymax = estimate + std.error,
+						 color = trait)) +
+	geom_hline(yintercept = 0, linetype = "dashed") +
+	geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
+	scale_color_viridis_d() +
+	labs(title = "(d.) Trait responses - Agriculture", 
+			 x = NULL, y = "Effect size (slope estimate ± SE)") +
+	theme_bw() +
+	theme(axis.text.x = element_text(angle = 45, hjust = 1),
+				text = element_text(size = 10),
+				legend.position = "none")
+
+effects_plot <- (comm_plot | traits_treecover) /
+	(traits_fragmentation | traits_agriculture)
 
 ggsave("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig2.png", 
 			 effects_plot, 
-			 width = 120,
-			 height = 200, 
+			 width = 180,
+			 height = 160, 
 			 units = "mm",
 			 dpi = 600)
 
@@ -395,6 +335,7 @@ ggsave("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figure
 # Define covariate sequences
 tree_seq <- seq(-2, 2, length.out = 100)
 frag_seq <- seq(-2, 2, length.out = 100)
+agri_seq <- c(0, 1)
 
 # Extract species names from coefficient column names
 species_names <- gsub("treecover_z-", "", grep("^treecover_z-", colnames(ms_model$beta.samples), value = TRUE))
@@ -661,3 +602,4 @@ diagnostics_clean <- diagnostics_table %>%
 write_csv(diagnostics_clean, "/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/model_diagnostics.csv")
 
 # ===== END =====
+

@@ -1,0 +1,1284 @@
+---
+title: "**WildLive!** Deforestation & Mammal Community Composition"
+subtitle: 'Data preparation and analysis'
+author:
+- name: "Merlin Weiß"
+  affiliation: "Department of Audiovisual Biodiversity Research, Senckenberg Institute for Natural Research, 60325 Frankfurt am Main, Germany" 
+output:
+  rmdformats::downcute:
+    code_folding: show
+    self_contained: TRUE
+    thumbnails: FALSE
+    lightbox: TRUE
+pkgdown:
+  as_is: true
+---
+
+```{r setup, include=FALSE, warnings = FALSE, messages = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#setwd("/Users/serpent/Documents/BSc/Thesis/Data")
+library(camtrapR)
+library(cowplot)
+library(raster) 
+library(terra)
+library(mapview)
+library(sf)        
+library(sp)
+library(DT)
+library(betareg) 
+library(car)   
+library(landscapemetrics)
+library(mgcv)
+library(ggeffects)
+library(tidyverse) 
+
+# Get pathname to WD
+pathname <- "/Users/serpent/Library/CloudStorage/GoogleDrive-merlin.s.weiss@gmail.com/My Drive/WildLive! /Report"
+```
+
+# Baseline
+
+This report covers the preparation steps and analysis done on the parsed **WildLive!** data (using a JSON export from January 2024). See the [JSON parsing](https://drive.google.com/file/d/1htpKQelkm3dli0-YSIqwJy1PtFywXyDz/view?usp=sharing) and [consensus](https://drive.google.com/file/d/1hu3zcxRO5ijVd1_bmFT1C-YR9FXmrn7S/view?usp=sharing) reports for data collection and parsing from Labelbox, and the development and analyses of the species consensus. 
+
+The following steps and analyses aim to get an insight into the effect of deforestation on mammal communities in the Chiquitano dry forest. The working manuscript for the corresponding paper can be accessed [here](https://docs.google.com/document/d/1ONVXDSaZa8RRSWvj5D2mhVI4b2JArdhcMhoTWbymL8M/edit?usp=sharing).
+
+The report is structured in two main parts: 
+
+- The data preparation of (1) the **species occurrence** data (thus the data collected from the camera trap stations, retrieved from Labelbox, and parsed from the JSON export), (2) the **camera trap** data (thus the operation data of the camera trap stations and their activity), and (3) the **deforestation data** (thus the collection of forest cover data from satellite images and the preparation of the associated covariates).
+
+- The analysis of the effect of environmental change (*forest cover* and *forest fragmentation*) on the community composition of mammals. 
+
+# Data preparation - Ocurrence data
+
+## Input data
+
+```{r occ input, echo=FALSE, warning=FALSE, message=FALSE}
+input <- read_csv(paste0(pathname, "/wildlive_parsed_json.csv"))
+```
+
+The starting point for the analysis are data parsed from a JSON export (Jan 2024 in this case) from Labelbox using the [parsing script](https://drive.google.com/file/d/1htpKQelkm3dli0-YSIqwJy1PtFywXyDz/view?usp=sharing). The data file can be accessed [here](https://drive.google.com/file/d/1hB8XeTj4RwGXrQ9P2nRGva6wt8Ro_spj/view?usp=sharing). 
+
+The data consists of `r nrow(input)` rows, where each row is a bounding box created for an occurrence captured in an image assigned by a citizen scientist. In total, this dataset features are `r length(unique(input$External_ID))` unique images. 
+\
+
+```{r input data info, echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+columns <- names(input)
+input$Review <- as.factor(input$Review)
+input$DateTimeOriginal <- as.POSIXct(input$DateTimeOriginal, format = "%Y:%m:%d %H:%M:%S")
+input$Station <- as.factor(input$Station)
+input$Camera <- as.factor(input$Camera)
+input$Category <- as.factor(input$Category)
+input$Trivial <- as.factor(input$Trivial)
+input$Family <- as.factor(input$Family)
+input$Genus <- as.factor(input$Genus)
+input$Species <- as.factor(input$Species)
+
+summary_function <- function(col_name) {
+  data_type <- class(input[[col_name]])[1]  # Use the first element of the class vector
+  missing_values <- sum(is.na(input[[col_name]]))
+  
+  if (is.numeric(input[[col_name]])) {
+    min_val <- min(input[[col_name]], na.rm = TRUE)
+    max_val <- max(input[[col_name]], na.rm = TRUE)
+    mean_val <- mean(input[[col_name]], na.rm = TRUE)
+    
+    # Convert Min and Max values to character for consistency
+    return(tibble(
+      Column = col_name,
+      DataType = data_type,
+      MissingValues = missing_values,
+      Min = as.character(min_val),
+      Max = as.character(max_val),
+      Mean = round(mean_val, digits = 1)
+    ))
+    
+  } else if (data_type == "POSIXct") {
+    min_date <- min(input[[col_name]], na.rm = TRUE)
+    max_date <- max(input[[col_name]], na.rm = TRUE)
+    
+    # Convert Min and Max dates to character
+    return(tibble(
+      Column = col_name,
+      DataType = data_type,
+      MissingValues = missing_values,
+      Min = as.character(min_date),
+      Max = as.character(max_date)
+    ))
+    
+  } else {
+    return(tibble(
+      Column = col_name,
+      DataType = data_type,
+      MissingValues = missing_values
+    ))
+  }
+}
+
+input_summary <- map_dfr(columns, summary_function)
+input_summary <- distinct(input_summary, Column, .keep_all = TRUE)
+input_summary$Description <- c("External ID of the image",
+								 "Link to the image",
+								 "The name of the station where the image was taken",
+								 "The number of the camera that took the image",
+								 "The E-Mail adress of the citizen scientist who create the label",
+								 "The broad category of the label",
+								 "The taxonomic family (if available)",
+								 "The taxonomic genus (if available)",
+								 "The taxonomic species (if available)",
+								 "The trivial name assigned in the label",
+								 "The number of individuals belonging to the same species caught on the image (if applicable)",
+								 "Approval or disapproval of the expert review (if applicable)",
+								 "Timestamp of the image")
+colnames(input_summary) <- c("Variable", "Type", "# NA", "Min.", "Max.", "Mean", "Description")
+datatable(input_summary, options = list(lengthMenu = c(4, 8, 13), pageLength = 4))
+rm(columns, input_summary)
+
+```
+
+Note the following constraints: At this point, **Camera ID** values are only extracted from grid stations. This is because the location of the camera ID is not consistently positioned in the External ID of images taken at non-grid stations. Since we focus primarily on grid stations (and the extraction of camera IDs from non-grid stations will take quite some time), we disregard them for now. Furthermore, timestamps of the images (see variable *DateTimeOriginal*) can only be extracted from images that are .JPG and not of .PNG images.
+
+## Temporal independence and consensus selection
+
+Now, we consider temporal independence in all consensus versions and select the best performing one, i.e., the one yielding the most temporally independent capture events (also see the [consensus report](https://drive.google.com/file/d/1hu3zcxRO5ijVd1_bmFT1C-YR9FXmrn7S/view?usp=sharing)). As a reminder, there are four different version with the associated amount of classified labels (when using the JSON export from Jan24):
+
+```{r laod consensus versions, echo = FALSE, message=FALSE, warning=FALSE}
+con1 <- read_csv(paste0(pathname, "/consensus_v1.csv"))
+con2 <- read_csv(paste0(pathname, "/consensus_v2.csv"))
+con3 <- read_csv(paste0(pathname, "/consensus_v3.csv"))
+con4 <- read_csv(paste0(pathname, "/consensus_v4.csv"))
+```
+
+- **Version 1**: The consensus using the expert review as a gold standard ([see file](https://drive.google.com/file/d/1hQpc-SEK898XvWe8O5L-Ho5DtWLE9mJZ/view?usp=sharing)) yielding `r nrow(con1)` classified labels
+- **Version 2**: The consensus without using the expert review ([see file](https://drive.google.com/file/d/1hSUBdoCQYyAGrh3mrpjn42oQwYrg0tcr/view?usp=sharing)) yielding `r nrow(con2)` classified labels
+- **Version 3**: The consensus with a weight parameter on the expert review ([see file](https://drive.google.com/file/d/1hLBJ-SKdz54b5ee8uH74BSrBJdGXRd2-/view?usp=sharing)) yielding `r nrow(con3)` classified labels
+- **Version 4**: The consensus where the expert review is only considered when there is disagreement ([see file](https://drive.google.com/file/d/1hOvA-z974BgSr7qE1_4OTBV8U_sKj81C/view?usp=sharing)) yielding `r nrow(con4)` classified labels
+
+Next, we will assess the temporal independence of captured species. The following chunk creates a function that first removes all labels that fall in the *other* category (humans, equipment, etc.) and filters out data where no accepted binomial species name can be found (i.e, records that were not identified to the species level). Then, the data is grouped by the Station and the accepted binomial name to calculate the time difference between images of the same species recorded at the same station. Lastly, we filter out all records that `are less that 30 minutes` apart. 
+
+```{r temporal independence, echo=TRUE, warning=FALSE, message=FALSE}
+
+# Define function to assess temporal independence of captures
+assess_temporal_independence <- function(data) {
+	
+  data %>%
+    # Remove "others" from data 
+    filter(Category != "others") %>%
+		# Filter out data not identified to the species level 
+    filter(complete.cases(Species)) %>%
+    # Get accepted binomial name
+    mutate(accepted_bin = tolower(paste0(Genus, "_", Species))) %>%
+    # Arrange by station, name and time 
+    arrange(Station, accepted_bin, DateTimeOriginal) %>%
+    # Calculate the time difference between consecutive captures of the same species at the same station 
+    group_by(Station, accepted_bin) %>%
+    mutate(delta_time = difftime(DateTimeOriginal, lag(DateTimeOriginal), units = "mins")) %>%
+    # Keep only the captures that are at least 30 minutes apart from the last capture of the same species
+    filter(is.na(delta_time) | delta_time >= 30) %>%
+    ungroup() %>%
+		# Remove the temporary delta_time column
+    select(-delta_time) 
+}
+
+# Assess temporal independence of consensus versions 
+con1_indep <- assess_temporal_independence(con1)
+con2_indep <- assess_temporal_independence(con2)
+con3_indep <- assess_temporal_independence(con3)
+con4_indep <- assess_temporal_independence(con4)
+```
+
+At this point, every row is one temporarily independent `capture event` of one **species**. We are going to choose the consensus version that yields the most temporarily independent capture events:
+
+- **con1** yields `r nrow(con1_indep)` capture events
+- **con2** yields `r nrow(con2_indep)` capture events
+- **con3** yields `r nrow(con3_indep)` capture events
+- **con4** yields `r nrow(con4_indep)` capture events
+
+```{r compare con yields, echo=FALSE, warning=FALSE, message=FALSE}
+
+con_yield <- bind_rows(
+  data.frame(Data = "Version 1", dplyr::select(con1_indep, External_ID, Trivial, accepted_bin)),
+  data.frame(Data = "Version 2", dplyr::select(con2_indep, External_ID, Trivial, accepted_bin)),
+  data.frame(Data = "Version 3", dplyr::select(con3_indep, External_ID, Trivial, accepted_bin)),
+  data.frame(Data = "Version 4", dplyr::select(con3_indep, External_ID, Trivial, accepted_bin))) %>%
+	mutate(Name = paste0(str_to_title(str_replace_all(Trivial, "_", " ")), " (", str_replace_all(accepted_bin, "_", " "), ")")) %>%
+	group_by(Data, Name) %>%
+  summarize(Count = n()) 
+
+datatable(con_yield %>%
+  pivot_wider(names_from = Data, values_from = Count, values_fill = 0) %>%
+	rename(Label = Name),
+  options = list(lengthMenu = c(5, 10, 25, 52), pageLength = 5))
+```
+
+Currently, **consensus version 1** performs best. Therefore, `con1_indep` will be the occurrence data used in the analysis. 
+
+# Data preparation - Camera traps
+
+Next, we will consider camera operation and activity to generate a survey report, and we build buffer zones around grid camera traps to delineate our sampling area. The camera trap meta data can be accessed [here](https://drive.google.com/file/d/1-w9PCK6wcRvlImPxp9Q75zdW1CLj5oLH/view?usp=sharing)
+
+## Camera operation 
+
+See the grid camera trap data below (not showing the *has_problem* columns).
+
+```{r camtraps, echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+
+camtraps <- read_csv(paste0(pathname, "/camtraps.csv")) %>%
+	mutate(Setup_date = as.Date(Setup_date, format = "%Y-%m-%d")) %>%
+	mutate(Retrieval_date = as.Date(Retrieval_date, format = "%Y-%m-%d")) %>%
+	mutate(across(starts_with("Problem"), as.Date, format = "%Y-%m-%d"))
+
+
+datatable(dplyr::select(camtraps, Station, Camera, long, lat, Setup_date, Retrieval_date),
+					options = list(lengthMenu = c(5, 10, 30, 60), pageLength = 5))
+rm(con1, con2, con2_indep, con3, con3_indep, con4, con4_indep, input) # clean environment
+```
+
+We can generate a camera operation matrix using `camtrapR::camop_problem()` and plot the station activity:
+
+```{r camop problem, echo=FALSE, warning=FALSE, message=FALSE, fig.cap="Camera operation heat map", fig.width=10, fig.height=7}
+
+# Build camera operation table 
+camop_problem <- cameraOperation(CTtable = camtraps, 
+						         stationCol = "Station",
+						         cameraCol = "Camera", 
+						         setupCol = "Setup_date",
+						         retrievalCol = "Retrieval_date",
+						         hasProblems = TRUE,
+						         byCamera = FALSE,
+						         allCamsOn = FALSE,
+						         camerasIndependent = FALSE,
+						         dateFormat = "%Y-%m-%d")
+# Plot camera activity 
+as_tibble(camop_problem, row.names = TRUE) %>%
+	mutate(Camera = rownames(as.data.frame(camop_problem))) %>%
+	gather(Day, Activity, -Camera) %>%
+	mutate(Activity = factor(Activity, levels = c(0, 1))) %>%
+	mutate(Day = as.Date(Day, format = "%Y-%m-%d")) %>%
+	filter(complete.cases(.)) %>%
+	ggplot(aes(x = Day, y = Camera, fill = Activity)) +
+	geom_tile(alpha = .75) +
+	scale_fill_manual(values = c("grey10", "forestgreen"),
+					  labels=c('not active', 'active')) + 
+	labs(x = NULL, y = NULL)+
+	scale_x_date(date_breaks = "1 year", date_labels = "%Y")+
+	theme_classic() +
+	theme(legend.position = c(0.07, 0.93))
+
+```
+
+
+Using the camera operation matrix, we calculate the number of active days for every combination of sampling year and station. This variable will later be used to correct for sampling effort in the data analysis: 
+
+```{r caclaulate camera activity, echo=TRUE, warning=FALSE, message=FALSE}
+# Write a function to count active days from the CamOp Matrix.
+count_active_days <- function(row) {
+	active <- !is.na(row) & row > 0
+	years <- as.integer(format(as.Date(colnames(camop_problem)), "%Y"))
+	total_active_days <- tapply(active, years, sum, na.rm = TRUE)
+	return(total_active_days)
+}
+
+# Calculate active days 
+days_active <- t(apply(camop_problem, 1, count_active_days)) %>%
+	as_tibble(rownames = "station") %>%
+	pivot_longer(cols = -station,
+							 names_to = "year", 
+							 values_to = "days_active")
+```
+
+```{r active days, echo=FALSE, warning=FALSE, message=FALSE}
+datatable(days_active, options = list(lengthMenu = c(5, 20, 50, 150), pageLength = 5))
+rm(count_active_days)
+```
+
+## Survey report
+
+Based on the species data synchronized to the camera operation table, we can generate a survey report of the time where we have data on camera operation (see [full survey report](https://drive.google.com/file/d/1-SrjI226vB0OMbzV0q1LonNPD1B_jFqL/view?usp=sharing)). 
+
+We can also examine the total number of (grid) captures plotted over time (i.e., per month): 
+
+```{r grid capturees per month, echo=FALSE, warning=FALSE, message=FALSE, fig.width=15, fig.height=8, fig.cap="Total captures per month"}
+con1_indep %>% 
+	dplyr::group_by(paste(format(as.Date(con1_indep$DateTimeOriginal), format = "%Y"), 
+												format(as.Date(con1_indep$DateTimeOriginal), format = "%m"), sep = "/")) %>% 
+	filter(Station %in% camtraps$Station) %>%
+	dplyr::summarise(captures = n()) %>%
+	rename(month = `paste(...)`) %>%
+	ggplot() + 
+	geom_bar(aes(x=month, y = captures), stat = "identity", alpha = .5, colour = "black", fill = "darkgreen") +
+	theme_bw()+
+	theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1, margin = margin(b=20))) +
+	xlab(NULL) +
+	ylab("# captures")
+
+```
+
+Or per month per (grid) station: 
+
+```{r grid capturees per station, echo=FALSE, warning=FALSE, message=FALSE, fig.width=15, fig.height=8, fig.cap="Total caputres per month per station"}
+
+con1_indep %>% 
+	dplyr::group_by(paste(format(as.Date(con1_indep$DateTimeOriginal), format = "%Y"), 
+												format(as.Date(con1_indep$DateTimeOriginal), format = "%m"), sep = "/"), Station) %>% 
+	filter(Station %in% camtraps$Station) %>%
+	dplyr::summarise(captures = n()) %>%
+	rename(month = `paste(...)`) %>%
+	ggplot() + 
+	geom_bar(aes(x=month, y = captures), stat = "identity", alpha = .5, fill = "darkgreen", colour = "black") +
+	facet_wrap(~Station) +
+	theme_bw()+
+	theme(axis.text.x = element_blank()) +
+	xlab("Month") +
+	ylab("# captures")
+```
+
+## Buffer zones
+
+To delineate our sampling areas, we'll use <u>1.5 km buffer zone</u> around every grid station (i.e., a radius of 1.5km):
+
+```{r buffer zones, echo=TRUE}
+## Build buffer zones
+station_buffer_1500 <- camtraps %>% 
+	# Keep only relevant columns
+	dplyr::select(Station, lat, long) %>% 
+	# Keep only one row per Station 
+	distinct(Station, .keep_all = TRUE) %>%
+	# Transform to spatial object 
+	st_as_sf(coords = c("long", "lat"), crs = 4326) %>%
+	# Generate buffer zones with 1500m radius 
+	st_buffer(dist = 1500) %>%
+	# Match format and projections
+	st_as_sf() %>%
+	st_transform(crs = st_crs("+proj=utm +zone=20 +south +datum=WGS84 +units=m +no_defs"))
+```
+
+A 2km buffer zone would likely be better (see [Semper-Pascual et al. (2021)](https://royalsocietypublishing.org/doi/full/10.1098/rspb.2020.2466)), but that would create quite some overlap between our buffer zones. See the following map for the buffer zones: 
+
+```{r mapview buffer zones, echo=FALSE, fig.width=8.3, fig.height=6, fig.cap="Buffer zones (1.5km radius)"}
+mapview(station_buffer_1500, map.types = "Esri.WorldImagery", legend = FALSE,  fill = NA, lwd = 3, color = "white")
+```
+
+# Data preparation - Forest cover  
+
+Deforestation covariates used in the analysis are based on two sources: The NDVI (normalized density vegetation index) retrieved from the [Sentinel 2 Copernicus Mission](https://dataspace.copernicus.eu/), and tree cover data (from 2020) retrieved from [Global Forest Watch](https://data.globalforestwatch.org/datasets/gfw::tropical-tree-cover/about) used to ground-truth the NDVI and to predict true forest cover.
+
+## NDVI mining & processing
+
+NDVI values are retrieved from 4 tiles (T20LPH, T20LNH, T20KPG, T20KNG) that were accessed via the [Copernicus open data hub](https://dataspace.copernicus.eu/). 26 images were retrieved for the time period 01/2017 - 10/2023, however, not all could be used due to clouds (see the [script mining the NDVI data](https://drive.google.com/file/d/1-Lhx-RhVSdPodlCdaVgndzMUPJP_nSBU/view?usp=sharing)). The table below shows the sensing date and the season of the images (`sat`) used. A folder containing all NDVI layers calculated from these images can be downloaded [here](https://drive.google.com/drive/folders/1-gh6pWA70jldFmoqK9aq2-CWK6uoovhH?usp=sharing).
+
+```{r sat data, echo=FALSE, warning=FALSE, message=FALSE}
+datatable(read_csv(paste0(pathname, "/sat_meta.csv")), options = list(lengthMenu = c(5, 10, 20, 30), pageLength = 5))
+```
+
+All available sentinel 2 images per year are stacked on top of each other and the mean NDVI per year is calculated to reduce seasonal bias and atmospheric noise (see [NDVI stacking script](https://drive.google.com/file/d/1-GNpRTXQ6Q5mubSS1gLy-nghGjujL0ZM/view?usp=sharing) for details). The stacked NDVI data (annual means) can be accessed [here](https://drive.google.com/drive/folders/1-mrhFfygh2WDtdJTtz_43l05gSMLgPW2?usp=sharing). 
+
+The annual means NDVI layers are then clipped to a research area outline which extends the minimum hull convex polygon around the buffer zones by 10km: 
+
+```{r delineate research area, echo=TRUE}
+# Get research area as a bounding box polygon to use as a clipping feature 
+research_area_outline <- station_buffer_1500 %>%
+	# define hull convex as bounding box 
+	st_bbox() %>%
+	st_make_grid(cellsize = c(
+		st_bbox(station_buffer_1500)[3]-st_bbox(station_buffer_1500)[1],
+    st_bbox(station_buffer_1500)[4]-st_bbox(station_buffer_1500)[2])) %>%
+	# Extend my 10km 
+	st_buffer(dist = 10000) %>%
+	st_as_sf() %>%
+	st_transform(crs = st_crs("+proj=utm +zone=20 +south +datum=WGS84 +units=m +no_defs")) %>%
+	# Simply extend 
+	st_as_sfc(st_bbox())
+```
+
+The annual means NDVI layer are shown below: 
+
+```{r stacked ndvi layers, echo=FALSE, warning=FALSE, message=FALSE, fig.width=15, fig.height=10, fig.cap="NDVI annual means"}
+
+ndvi_2017 <- raster("/Users/serpent/Documents/BSc/Thesis/Data/Sat/NDVI (Annual means)/ndvi_2017.grd")
+ndvi_2018 <- raster("/Users/serpent/Documents/BSc/Thesis/Data/Sat/NDVI (Annual means)/ndvi_2018.grd")
+ndvi_2019 <- crop(raster("/Users/serpent/Documents/BSc/Thesis/Data/Sat/NDVI (Annual means)/ndvi_2019.grd"), station_buffer_1500)
+ndvi_2020 <- raster("/Users/serpent/Documents/BSc/Thesis/Data/Sat/NDVI (Annual means)/ndvi_2020.grd")
+ndvi_2021 <- raster("/Users/serpent/Documents/BSc/Thesis/Data/Sat/NDVI (Annual means)/ndvi_2021.grd")
+ndvi_2022 <- raster("/Users/serpent/Documents/BSc/Thesis/Data/Sat/NDVI (Annual means)/ndvi_2022.grd")
+ndvi_2023 <- raster("/Users/serpent/Documents/BSc/Thesis/Data/Sat/NDVI (Annual means)/ndvi_2023.grd")
+
+par(mfrow = c(2, 4))
+stations <- as(as(station_buffer_1500, "Spatial"), "SpatialPolygonsDataFrame")
+ext <- extent(ndvi_2017)
+
+plot(ndvi_2017, main = "Mean NDVI 2017 (n=3)", ylim = c(ext@ymin, ext@ymax), mar = c(1, 1, 1, 1)); plot(stations, add = TRUE); 
+plot(ndvi_2018, main = "Mean NDVI 2018 (n=3)", ylim = c(ext@ymin, ext@ymax), mar = c(1, 1, 1, 1)); plot(stations, add = TRUE); 
+plot(ndvi_2019, main = "Mean NDVI 2019 (n=3)", ylim = c(ext@ymin, ext@ymax), mar = c(1, 1, 1, 1)); plot(stations, add = TRUE);
+plot(ndvi_2020, main = "Mean NDVI 2020 (n=4)", ylim = c(ext@ymin, ext@ymax), mar = c(1, 1, 1, 1)); plot(stations, add = TRUE);
+plot(ndvi_2020, main = "Mean NDVI 2021 (n=4)", ylim = c(ext@ymin, ext@ymax), mar = c(1, 1, 1, 1)); plot(stations, add = TRUE);
+plot(ndvi_2021, main = "Mean NDVI 2022 (n=3)", ylim = c(ext@ymin, ext@ymax), mar = c(1, 1, 1, 1)); plot(stations, add = TRUE);
+plot(ndvi_2022, main = "Mean NDVI 2023 (n=2)", ylim = c(ext@ymin, ext@ymax), mar = c(1, 1, 1, 1)); plot(stations, add = TRUE)
+```
+
+## Predicting forest cover 
+
+[treecover_data]: https://drive.google.com/file/d/12qBVVXAmG124oTRFNKE_KcXxSpEZQRnV/view?usp=sharing
+
+The NDVI is not a direct proxy for tree cover, but rather quantifies vegetation health, density, and coverage. Therefore, we need to establish its relationship with actual forest cover in our research area. Ideally this would be done using field data, but we will use a reliable source of tree cover instead. We'll use the *10S_070W* tile (accessible [here](https://drive.google.com/file/d/1-11Li448wbgBSH56tMLK7zfRywrJFCx-/view?usp=sharing)) of the *tropical forest cover* layer from [Global Forest Watch](https://data.globalforestwatch.org/datasets/gfw::tropical-tree-cover/about), which gives tree cover in percent for 2020 (see the GFW [github](https://github.com/wri/sentinel-tree-cover/wiki/Product-Specifications) for details on this layer). 
+
+The GFW tree cover data is shown below:  
+
+```{r GFW layer, echo=FALSE, warning=FALSE, message=FALSE, fig.width=12, fig.height=8, fig.cap="GFW 2020 tree cover data"}
+# Match projection of research area from UTM to lat/long
+mask <- station_buffer_1500 %>%
+	st_transform(crs = st_crs("+proj=longlat +datum=WGS84 +no_defs")) %>%
+	st_as_sf()
+	
+# Crop the GFW data to research extent
+trees <- raster::raster(raster::crop(
+	# Read GFW tree cover
+	terra::rast(paste0(pathname, "/10S_070W.tif")),
+	# crop to mask
+	mask))
+
+plot(trees, main = "Tree cover in 2020 (%)"); plot(mask, add = TRUE, colour = NA)
+```
+
+Next, we will extract the tree cover values for every buffer polygon and generate a data frame giving the mean and the standard deviation of tree cover. We will do the same for our 2020 NDVI data and merge both data frames together. 
+
+```{r extract GFW, echo=FALSE, message=FALSE, warnings = FALSE}
+# Extract tree cover data inside buffer zones from GFW data 
+trees_df <- raster::extract(trees, mask) %>%
+	# Calculate mean and SD
+  map(~ tibble(
+    mean_treecover = mean(.x),
+    sd_treecover = sd(.x)
+  )) %>%
+	# Build databse
+  bind_rows() %>%
+	# Get stations
+  mutate(station = mask$Station) %>%
+	# Set formats
+  mutate(across(c(mean_treecover, sd_treecover), as.numeric))
+
+# Extract tree cover data inside buffer zones from NDVI data 
+ndvi_2020_df <- raster::extract(ndvi_2020, stations) %>%
+  map(~ tibble(
+    mean_ndvi = mean(.x),
+    sd_ndvi = sd(.x)
+  )) %>%
+  bind_rows() %>%
+  mutate(station = mask$Station) %>%
+  mutate(across(c(mean_ndvi, sd_ndvi), as.numeric))
+
+# Build a data set to train our regression model 
+training_data <- trees_df %>% 
+	left_join(ndvi_2020_df, by = "station") %>%
+	dplyr::select(station, mean_treecover, mean_ndvi, sd_treecover, sd_ndvi) %>%
+	mutate(mean_treecover = round(mean_treecover/100, digits = 3))
+```
+
+This is the data (accessible [here](https://drive.google.com/file/d/12jYP5oNxoe2s4MXtlXuUQCTaIxSw4QDU/view?usp=sharing)) we will use to train a regression model that we can use to predict forest cover. 
+
+```{r show training data, echo = FALSE, warning=FALSE, message=FALSE}
+datatable(training_data, options = list(lengthMenu = c(5, 10, 20, 30), pageLength = 5)) # show table
+rm(con_yield, ext, input, ndvi_2020_df, trees_df, trees, assess_temporal_independence, summary_function) # clean global environment
+```
+
+Next, we need to establish a relationship between `mean_treecover` and the NDVI values. We first examine how `mean_treecover` is distributed and how it relates to the NDVI.
+
+```{r Tree cover distribution and NDVI relationships, echo=FALSE, warning=FALSE, message=FALSE, fig.width=14, fig.height=6 }
+
+# Build compound figure
+plot_grid(
+	
+	ggplot(training_data, aes(x=mean_treecover)) + 
+		geom_histogram(bins = 30, colour = "black", fill = "forestgreen", alpha = .75) +
+		theme_bw()+
+		labs(x="Mean forest cover (%)", y="Frequency"),
+	
+	ggplot(training_data, aes(y=mean_treecover, x = mean_ndvi)) + 
+		geom_point(colour = "grey60", alpha = .75) +
+		geom_smooth(method = "lm", formula = "y~x", colour = "darkgreen", fill = "lightgreen")+
+		theme_bw()+
+		labs(x="Mean NDVI", y="Mean forest cover (%)"),
+	
+	ggplot(training_data, aes(y=mean_treecover, x = sd_ndvi)) + 
+		geom_point(colour = "grey60", alpha = .75) +
+		geom_smooth(method = "lm", formula = "y~x", colour = "forestgreen", fill = "lightgreen")+
+		theme_bw()+
+		labs(x="Standard deviation NDVI", y="Mean forest cover (%)"),
+	
+	ncol = 3, nrow = 1
+)
+```
+We have good reason to assume linearity between `mean_forestcover` and `mean_ndvi` and `sd_ndvi`, but `mean_forestcover` is highly left-skewed. A regular linear regression model causes problems because (1) the assumptions of normality is not met (I tried log, sqrt, and box cox transforming but without success), and (2) because it likely will yield predictions that exceed 100% tree cover. Instead, we will use a **beta regression** model. Beta regression is a specialized type of regression designed specifically for modelling data that is bounded between 0 and 1, such as proportions or percentages. It's particularly useful when dealing with continuous response variables that exhibit heteroscedasticity or have a skewed distribution that is inappropriate for linear regression, as it assumes a beta distribution. 
+
+We'll run a backwards stepwise model selection using the AIC. We start with the most complex model (i.e, a full factorial in which all additive and interactive terms are considered), the try a additive model, and lastly each covariate on it one (Note: I have also tried including other NDVI descriptives such as median, min, max, or the variance, but the mean and the sd are the ones including the most information). 
+
+```{r model selection, echo=TRUE, include=TRUE}
+# Start with the most complex (fully factorial) model 
+mod_beta1 <- betareg(mean_treecover ~ mean_ndvi*sd_ndvi ,data = training_data)
+
+# Try a more simple, additive model 
+mod_beta2 <- betareg(mean_treecover ~ mean_ndvi + sd_ndvi, data = training_data)
+
+# Try a simple model with just the mean 
+mod_beta3 <- betareg(mean_treecover ~ mean_ndvi, data = training_data)
+
+# Try a simple model with just the sd
+mod_beta4 <- betareg(mean_treecover ~ sd_ndvi, data = training_data)
+
+# Check model performance 
+AIC(mod_beta1, mod_beta2, mod_beta3, mod_beta4)
+```
+
+The full-factorial model (`beta_mod1`) has the lowest AIC, indicating that the high number of parameters (degrees of freedom = 5) is compensated by a better model fit (a rule of thumb is a AIC difference of >2 supports the model to fit substantially better). 
+
+```{r beta mod1, echo=FALSE, include=TRUE, fig.width=15}
+summary(mod_beta1)
+par(mfrow = c(1, 4))
+plot(mod_beta1)
+```
+
+`mod_beta1` has a very satisfactory (pseudo) r squared (i.e., about 80% of the variance in tree cover are explained by our model), and all our covariates significantly affect our response variable! When looking at the diagnostic plots, we also see that the model behaves quite well (i.e., we have no problem with heteroscedasticity, we have some outlying observations but nothing substantial). The only problem we might have is multicollinearity between `mean_ndvi` and `sd_ndvi`:
+
+```{r checking multicollinearity, echo=TRUE, include=TRUE}
+# To check for multicollinearity, we calculate the correlation coefficient and the VIF
+cor(training_data$mean_ndvi, training_data$sd_ndvi) # not great 
+vif(mod_beta1) # full factorial model
+```
+
+This is bad! The VIF (variance inflation factor) is **way** to high. This could affect the model stability and interpretation of coefficients. Therefore, we'll go with the additive one: 
+
+```{r additive, echo=FALSE, include=TRUE, fig.width=15}
+summary(mod_beta2)
+par(mfrow = c(1, 4))
+plot(mod_beta2)
+```
+We'll also check the VIF: 
+
+```{r vif beta 2, echo=FALSE}
+vif(mod_beta2) # additive model 
+```
+
+`mod_beta2` also behaves quite well, we only get a slightly higher AIC, and our r squared (the proportion of variance explained) is still high (about 75%). We also likely not have big trouble with multicollinearity. This will be our final model! We can test our model performance by letting it predict the forest cover of our training data set and see how well it works: 
+
+```{r test model perfomance, echo = TRUE, warnings = FALSE, message=FALSE}
+# Predict tree cover of our training data set 
+training_data$predicted_mean_treecover <- predict(mod_beta2, newdata = training_data)
+
+# Linear R-squared : Indicates the proportion of variance explained by the model
+rsquared <- cor(training_data$predicted_mean_treecover, training_data$mean_treecover)^2 
+
+# Root Mean Squared Error (RMSE): Measures the average difference between predicted values and actual values.
+rmse <- sqrt(mean((training_data$predicted_mean_treecover - training_data$mean_treecover)^2)) 
+
+# Mean Absolute Error (MAE): Measures the average absolute differences between predicted and actual values.
+mae <- mean(abs(training_data$predicted_mean_treecover - training_data$mean_treecover))
+
+# mod2 is our final model :) let's call it tree_mod
+tree_mod <- betareg(mean_treecover ~ mean_ndvi + sd_ndvi, data = training_data)
+```
+
+```{r cat oerformance, echo=FALSE}
+# Summary of metrics
+cat("R-squared:", rsquared, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+
+rm(mod_beta1, mod_beta2, mod_beta3, mod_beta4, mae, rmse)
+```
+
+We get a linear R-squared of `r round(rsquared, digits = 2)` (i.e. our model predicts with a 92% accuracy, that should be good enough). The Root Mean Squared Error suggest that on average our predicted values differ about 4.1 % from our observed values. The absolute difference is less than 3%. I would say this is great. 
+
+Next, we'll extract the mean and sd NDVI from our remaining stacked NDVI layers and predict tree cover using our model:
+
+```{r predicting treecover using tree mod, echo=TRUE, warning=FALSE}
+
+# Next, we get mean and SD NDVI values for the years 2017 - 2023 and predict forest cover using our model. 
+
+# Extract 2017 NDVI data from station buffer polygons
+ndvi_2017_df <- raster::extract(ndvi_2017, stations) %>%
+	# Extract mean and SD
+  map(~ tibble(
+    mean_ndvi = mean(.x),
+    sd_ndvi = sd(.x)
+  )) %>%
+	# Build database
+  bind_rows() %>%
+	# Get station names
+  mutate(station = mask$Station) %>%
+	# Set formats
+  mutate(across(c(mean_ndvi, sd_ndvi), as.numeric)) %>%
+	# Predict true tree cover
+	mutate(predicted_mean_treecover = predict(tree_mod, newdata = .)) %>%
+	# Add year variable 
+	mutate(year = "2017")
+
+# 2018
+ndvi_2018_df <- raster::extract(ndvi_2018, stations) %>%
+  map(~ tibble(
+    mean_ndvi = mean(.x),
+    sd_ndvi = sd(.x)
+  )) %>%
+  bind_rows() %>%
+  mutate(station = mask$Station) %>%
+  mutate(across(c(mean_ndvi, sd_ndvi), as.numeric)) %>%
+	mutate(predicted_mean_treecover = predict(tree_mod, newdata = .)) %>%
+	mutate(year = "2018")
+
+# 2019
+ndvi_2019_df <- raster::extract(ndvi_2019, stations) %>%
+  map(~ tibble(
+    mean_ndvi = mean(.x),
+    sd_ndvi = sd(.x)
+  )) %>%
+  bind_rows() %>%
+  mutate(station = mask$Station) %>%
+  mutate(across(c(mean_ndvi, sd_ndvi), as.numeric)) %>%
+	mutate(predicted_mean_treecover = predict(tree_mod, newdata = .)) %>%
+	mutate(year = "2019")
+
+# 2020 (this is already in our training data)
+ndvi_2020_df <- training_data %>% 
+	dplyr::select(mean_ndvi, sd_ndvi, station, predicted_mean_treecover) %>%
+	mutate(year = "2020")
+
+# 2021
+ndvi_2021_df <- raster::extract(ndvi_2021, stations) %>%
+  map(~ tibble(
+    mean_ndvi = mean(.x),
+    sd_ndvi = sd(.x)
+  )) %>%
+  bind_rows() %>%
+  mutate(station = mask$Station) %>%
+  mutate(across(c(mean_ndvi, sd_ndvi), as.numeric)) %>%
+	mutate(predicted_mean_treecover = predict(tree_mod, newdata = .)) %>%
+	mutate(year = "2021")
+
+# 2022
+ndvi_2022_df <- raster::extract(ndvi_2022, stations) %>%
+  map(~ tibble(
+    mean_ndvi = mean(.x),
+    sd_ndvi = sd(.x)
+  )) %>%
+  bind_rows() %>%
+  mutate(station = mask$Station) %>%
+  mutate(across(c(mean_ndvi, sd_ndvi), as.numeric)) %>%
+	mutate(predicted_mean_treecover = predict(tree_mod, newdata = .)) %>%
+	mutate(year = "2022")
+
+# 2023
+ndvi_2023_df <- raster::extract(ndvi_2023, stations) %>%
+  map(~ tibble(
+    mean_ndvi = mean(.x),
+    sd_ndvi = sd(.x)
+  )) %>%
+  bind_rows() %>%
+  mutate(station = mask$Station) %>%
+  mutate(across(c(mean_ndvi, sd_ndvi), as.numeric)) %>%
+	mutate(predicted_mean_treecover = predict(tree_mod, newdata = .)) %>%
+	mutate(year = "2023")
+
+# Build database
+treecover <- bind_rows(ndvi_2017_df, ndvi_2018_df, ndvi_2019_df, ndvi_2020_df, ndvi_2021_df, ndvi_2022_df, ndvi_2023_df) %>%
+	as_tibble() %>%
+	dplyr::select(station, year, predicted_mean_treecover) %>%
+	# Format treecover as actual percentage (1-100)
+	mutate(treecover = predicted_mean_treecover *100)
+```
+
+The data can be accessed [here](https://drive.google.com/file/d/12qBVVXAmG124oTRFNKE_KcXxSpEZQRnV/view?usp=sharing).
+
+```{r show tree cover data, echo = FALSE, warning=FALSE}
+datatable(treecover, options = list(lengthMenu = c(5, 20, 50, 100, 150), pageLength = 5))
+rm(training_data, ndvi_2017_df, ndvi_2018_df, ndvi_2019_df, ndvi_2020_df, ndvi_2021_df, ndvi_2022_df, ndvi_2023_df, research_area_outline, station_buffer_1500, training_data, tree_mod, rsquared)
+```
+
+# Data preparation - Forest fragmentation 
+
+Next, we are going to compute our second covariate **forest fragmentation**, which will be expressed as the aggregation index. The aggregation index is the number of like adjacencies between forest patches, divided by the maximum possible number of like adjacencies between forest patches, multiplied by 100 (to convert to a percentage). It equals 0 for maximally disaggregated and 100 for maximally aggregated classes (i.e., landscape types). Thus, high values indicate less fragmentation and more continuous habitat, while low AI values indicate more fragmentation.
+
+For every year in our study period, we will calculate the aggregation index for every buffer zone based on the NDVI. We will reclassify forest (or the approximation of it) as `NDVI >.65` [see Ya'acob et al. (2014)](https://iopscience.iop.org/article/10.1088/1755-1315/19/1/012017/meta) and calculate the index using the landscape metrics package. The cohesion index is calculates as follows: 
+
+$$Aggregation = [\sum_{i=1}^m(\frac{g_{ij}}{max- g_{ij}})P_i] * (100)$$
+
+where g<sub>ij</sub> is the number of like adjacencies based on the single-count method and *max*-g<sub>ij</sub> is the classwise maximum number of like adjacencies of class *i* and *P<sub>i</sub>* the proportion of landscape compromised of class *i*.
+
+It equals the number of like adjacencies divided by the theoretical maximum possible number of like adjacencies for that class summed over each class for the entire landscape. The metric is based on he adjacency matrix and the single-count method.
+
+```{r calculate aggregation, echo=TRUE, warnings = FALSE, message = FALSE}
+
+# Define forest thresholds
+forest_reclass <- data.frame(from = c(-Inf, .65), to = c(.65, Inf), becomes = c(0, 1))
+# Write function to reclassify listed raster layers 
+reclassify_raster <- function(raster_layer, reclass_matrix) {
+  reclassified <- reclassify(raster_layer, rcl = as.matrix(reclass_matrix), right = FALSE)
+  return(reclassified)
+}
+
+# --- 2017 --- 
+# Loop through each buffer polygon
+frag_2017 <- list()
+for (i in 1:nrow(stations)) {
+  buffer <- stations[i,]
+  frag_2017[[buffer@data$Station]] <- mask(ndvi_2017, buffer)
+}
+# Calculate aggregation index and create database
+frag_2017 <- lapply(frag_2017, reclassify_raster, reclass_matrix = forest_reclass) %>%
+	map(lsm_c_ai) %>%
+	# Transform to a tibble 
+	bind_rows(.id = "Station") %>%
+	# Keep only the value for forest 
+	filter(class == 1) %>%
+	# Keep only relevant columns
+  dplyr::select(Station, value) %>%
+	rename(aggregation_forest = value) %>%
+	# Add year
+	mutate(year = "2017")
+
+# --- 2018 --- 
+# Loop through each buffer polygon
+frag_2018 <- list()
+for (i in 1:nrow(stations)) {
+  buffer <- stations[i,]
+  frag_2018[[buffer@data$Station]] <- mask(ndvi_2018, buffer)
+}
+# Calculate aggregation index and create database
+frag_2018 <- lapply(frag_2018, reclassify_raster, reclass_matrix = forest_reclass) %>%
+	map(lsm_c_ai) %>%
+	# Transform to a tibble 
+	bind_rows(.id = "Station") %>%
+	# Keep only the value for forest 
+	filter(class == 1) %>%
+	# Keep only relevant columns
+  dplyr::select(Station, value) %>%
+	rename(aggregation_forest = value) %>%
+	# Add year
+	mutate(year = "2018")
+
+# --- 2019 --- 
+# Loop through each buffer polygon
+frag_2019 <- list()
+for (i in 1:nrow(stations)) {
+  buffer <- stations[i,]
+  frag_2019[[buffer@data$Station]] <- mask(ndvi_2019, buffer)
+}
+# Calculate aggregation index and create database
+frag_2019 <- lapply(frag_2019, reclassify_raster, reclass_matrix = forest_reclass) %>%
+	map(lsm_c_ai) %>%
+	# Transform to a tibble 
+	bind_rows(.id = "Station") %>%
+	# Keep only the value for forest 
+	filter(class == 1) %>%
+	# Keep only relevant columns
+  dplyr::select(Station, value) %>%
+	rename(aggregation_forest = value) %>%
+	# Add year
+	mutate(year = "2019")
+
+# --- 2020 --- 
+# Loop through each buffer polygon
+frag_2020 <- list()
+for (i in 1:nrow(stations)) {
+  buffer <- stations[i,]
+  frag_2020[[buffer@data$Station]] <- mask(ndvi_2020, buffer)
+}
+# Calculate aggregation index and create database
+frag_2020 <- lapply(frag_2020, reclassify_raster, reclass_matrix = forest_reclass) %>%
+	map(lsm_c_ai) %>%
+	# Transform to a tibble 
+	bind_rows(.id = "Station") %>%
+	# Keep only the value for forest 
+	filter(class == 1) %>%
+	# Keep only relevant columns
+  dplyr::select(Station, value) %>%
+	rename(aggregation_forest = value) %>%
+	# Add year
+	mutate(year = "2020")
+
+# --- 2021 --- 
+# Loop through each buffer polygon
+frag_2021 <- list()
+for (i in 1:nrow(stations)) {
+  buffer <- stations[i,]
+  frag_2021[[buffer@data$Station]] <- mask(ndvi_2021, buffer)
+}
+# Calculate aggregation index and create database
+frag_2021 <- lapply(frag_2021, reclassify_raster, reclass_matrix = forest_reclass) %>%
+	map(lsm_c_ai) %>%
+	# Transform to a tibble 
+	bind_rows(.id = "Station") %>%
+	# Keep only the value for forest 
+	filter(class == 1) %>%
+	# Keep only relevant columns
+  dplyr::select(Station, value) %>%
+	rename(aggregation_forest = value) %>%
+	# Add year
+	mutate(year = "2021")
+
+# --- 2022 --- 
+# Loop through each buffer polygon
+frag_2022 <- list()
+for (i in 1:nrow(stations)) {
+  buffer <- stations[i,]
+  frag_2022[[buffer@data$Station]] <- mask(ndvi_2022, buffer)
+}
+# Calculate aggregation index and create database
+frag_2022 <- lapply(frag_2022, reclassify_raster, reclass_matrix = forest_reclass) %>%
+	map(lsm_c_ai) %>%
+	# Transform to a tibble 
+	bind_rows(.id = "Station") %>%
+	# Keep only the value for forest 
+	filter(class == 1) %>%
+	# Keep only relevant columns
+  dplyr::select(Station, value) %>%
+	rename(aggregation_forest = value) %>%
+	# Add year
+	mutate(year = "2022")
+
+# --- 2023 --- 
+# Loop through each buffer polygon
+frag_2023 <- list()
+for (i in 1:nrow(stations)) {
+  buffer <- stations[i,]
+  frag_2023[[buffer@data$Station]] <- mask(ndvi_2023, buffer)
+}
+# Calculate aggregation index and create database
+frag_2023 <- lapply(frag_2023, reclassify_raster, reclass_matrix = forest_reclass) %>%
+	map(lsm_c_ai) %>%
+	# Transform to a tibble 
+	bind_rows(.id = "Station") %>%
+	# Keep only the value for forest 
+	filter(class == 1) %>%
+	# Keep only relevant columns
+  dplyr::select(Station, value) %>%
+	rename(aggregation_forest = value) %>%
+	# Add year
+	mutate(year = "2023")
+
+# Concentrate data 
+fragmentation <- bind_rows(frag_2017, frag_2018, frag_2019, frag_2020, frag_2021, frag_2022, frag_2023) %>%
+	rename(station = Station)
+```
+
+The resulting data is shown below: 
+```{r clean up frag, echo=FALSE, warning=FALSE}
+datatable(fragmentation, options = list(lengthMenu = c(5, 20, 50, 100, 150), pageLength = 5))
+rm(buffer, forest_reclass, frag_2017, frag_2018, frag_2019, frag_2020, frag_2021, frag_2022, frag_2023, mask, ndvi_2017, ndvi_2018, ndvi_2019, ndvi_2020, ndvi_2021, ndvi_2022, ndvi_2023, stations, i, reclassify_raster)
+```
+
+# Data preparation - Agriculture
+
+Finally, we will use the presence/absence of Cattle as an additional covariate to approximate the presence of agriculture. For every combination of sampling year and station, we will consider agriculture to be active if *1* or more independent captures of cattle were recorded, and inactive if less than 1 cattle captures were recorded. 
+
+```{r cattle abundance, echo=TRUE, warning=FALSE, message=FALSE}
+# Find station-year combinations where cattle were found
+cattle <- con1_indep %>%
+	# Keep only cattle
+	filter(accepted_bin == "bos_taurus") %>%
+	# Keep only grid stations
+	filter(Station %in% unique(treecover$station)) %>%
+	# Get year variable
+	mutate(year = year(DateTimeOriginal)) %>%
+	filter(year %in% unique(treecover$year)) %>%
+	mutate(year = as.character(year)) %>%
+	# Group by Station and year
+	group_by(accepted_bin, Station, year) %>%
+	# Summarise cattle presence/absence
+	summarise(agriculture = ifelse(n() > 1, 1, 0)) %>%
+	ungroup() %>%
+	# Fix capitalization
+	rename(station = Station)
+```
+
+# Covariates
+
+Now that all covariates are calculated, we can combine and examine them. 
+
+## Forest covariates
+
+First, we combine tree cover and aggregation data and examine it: 
+
+```{r combine covariates, echo=TRUE}
+covariates <- treecover %>% 
+	left_join(fragmentation, by = c("station", "year")) %>%
+	dplyr::select(station, year, treecover, aggregation_forest)
+```
+
+We can also examine the change per station per year (excluding 2023 since we do not have full data coverage): 
+
+```{r plot treecover, echo = FALSE, fig.width=15, fig.height=8, fig.cap = "Covariates per station"}
+# plot tree cover 
+covariates %>%
+  mutate(year = factor(year, levels = c("2017", "2018", "2019", "2020", "2021", "2022", "2023"))) %>%
+  filter(year != "2023") %>%
+  filter(station %in% camtraps$Station) %>%
+  pivot_longer(cols = -c(station, year),
+               names_to = "Metric", 
+               values_to = "value") %>%
+  mutate(Metric = as.factor(Metric)) %>%
+  ggplot(aes(x = year, y = value, group = Metric, color = Metric)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c("forestgreen", "black")) +  # Manual color specification
+  facet_wrap(~ station) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) + 
+  labs(x = NULL, y = "Value")
+```
+
+## Agriculture and Camera Activity
+
+Lastly, we add our agriculture data (expressed as the presence of cattle) and the camera activity (days) for every sampling unit. 
+
+```{r add cattle to covariates, echo=TRUE}
+covariates <- covariates %>% 
+	# Add agriculture data
+	left_join(cattle, by = c("station", "year")) %>%
+	# Add camera activity
+	left_join(days_active, by = c("station", "year")) %>%
+	# Keep relevant columns
+	dplyr::select(station, year, treecover, aggregation_forest, agriculture, days_active) %>%
+	# Set some formats
+	mutate(agriculture = as.factor(ifelse(is.na(agriculture), 0, agriculture))) %>%
+	mutate(year = as.numeric(year)) %>%
+	# Add lat long coordinates
+	left_join(
+		camtraps %>% 
+			dplyr::select(Station, lat, long) %>%
+			distinct() %>%
+			rename(station = Station),
+		by = "station") %>%
+	# Set format 
+	as_tibble()
+```
+```{r clean env, echo=FALSE, warning=FALSE}
+datatable(covariates, options = list(lengthMenu = c(5, 20, 50, 100, 150), pageLength = 5))
+rm(cattle, fragmentation, treecover, days_active, camop_problem, camtraps)
+```
+
+# Data analysis 
+
+## Modelling
+
+We will use Generalized Additive Models (GAMs) to model species occupancy in response to our covariates while accounting for spatial and temporal dependencies. The gloabl model structure will look like this: 
+
+```{r general model strucutre, echo=TRUE, warning=FALSE, eval=FALSE}
+gam_model <- gam(presence ~ s(year, bs = "tp", k = 3) + 
+                         s(lat, long, bs = "tp", k = 5) + 
+                         treecover + 
+                         aggregation_forest + 
+                         agriculture + 
+                         offset(log(days_active)),
+                 data = dat,
+                 family = binomial(link = "logit"))
+```
+
+In this model:
+
+- *presence* is the binary response variable indicating species presence (1) or absence (0)
+- `s(year, bs = "tp", k = 3)` represents a thin plate regression spline for the year variable, with a basis dimension *k* of *3*, capturing temporal trends
+- `s(lat, long, bs = "tp", k = 5)` represents a thin plate regression spline for the spatial coordinates (latitude and longitude), with a basis dimension *k* of 5, capturing spatial variation.
+- *treecover*, *aggregation_forest*, and *agriculture* are the linear predictors representing our covariates of interest.
+- `offset(log(days_active))` adjusts the model for the effort variation, ensuring that the probability of presence is scaled appropriately.
+
+The inclusion of smooth terms for year and the spatial coordinates (lat, long) allows the model to account for potential autocorrelation in the data. Temporal autocorrelation is managed by the spline function over year, which can flexibly fit trends over time without assuming linearity. Spatial autocorrelation is addressed by the bivariate spline over latitude and longitude, which models the spatial structure in the data, capturing potential clustering or dispersal patterns of the species.
+
+The GAM is fitted using the `mgcv::gam()` function, which utilizes penalized regression splines to fit the model, optimizing the degree of smoothness for each spline term via restricted maximum likelihood (REML).
+
+In the following code implementation, we will loop every mammal species through the analysis framework and retrieve occupancy estimates in response to our covariates, while accounting for spatial and temporal dependencies. The following code defined the analyis framework in a custom formula that can be passed on to our input data and can be applied for every species. 
+
+We include a number of filters and checks in our analysis: 
+
+- **We only use mammal species where we had 10 presence occasions!!** No meaningful estimated can be derived with less than 10 instances where the animal was present. If we found less than 10 instances where a species was present, no model will be fit. 
+
+- We start with the global model and then do **stepwise backwards selection** to find the best fitting anmd most parsimonious model. Model selection will be primarily based on the AIC. As logistic models are prone to overfitting, we also include a check to make sure we don't select models with an unrealistically high R squared value. Lastly, we incorporate a check to not drop terms that turn out significant even if a model formula without this term may reduce the AIC.  
+
+```{r loop model through species, echo=TRUE, warning=FALSE, message=FALSE}
+# Function to fit GAM models with different covariates and select the best one based on AIC
+fit_best_gam_model <- function(species) {
+	
+	# Prep input data for every species 
+	dat <- con1_indep %>%
+		# Get species data 
+		filter(accepted_bin == species) %>%
+		# Keep only grid stations
+		filter(Station %in% unique(covariates$station)) %>%
+		# Set format
+		mutate(year = year(DateTimeOriginal)) %>%
+		# Calculate presence/absence
+		group_by(accepted_bin, Station, year) %>%
+		summarise(presence = ifelse(n() >= 1, 1, 0), .groups = 'drop') %>%
+		rename(station = Station) %>%
+		# Join with covariates
+		right_join(covariates, by = c("station", "year")) %>%
+		# Drop data with no camera activity and meaningful covariates
+		filter(days_active != 0 & year != "2023") %>%
+		# Set formats
+		mutate(year = as.numeric(year)) %>%
+		mutate(accepted_bin = species) %>%
+		mutate(presence = replace_na(presence, 0)) %>%
+		as_tibble()
+	
+	# Check for sufficient data
+	if (sum(dat$presence) < 10) {
+		warning(paste("Not enough data for species:", species))
+		return(list(model = NA, data = dat))
+	}
+	
+	# Define model formulas
+	formulas <- list(
+		presence ~ s(year, bs = "tp", k = 3) + s(lat, long, bs = "tp", k = 5) + 
+			treecover + offset(log(days_active)),
+		presence ~ s(year, bs = "tp", k = 3) + s(lat, long, bs = "tp", k = 5) + 
+			treecover + aggregation_forest + offset(log(days_active)),
+		presence ~ s(year, bs = "tp", k = 3) + s(lat, long, bs = "tp", k = 5) + 
+			treecover + agriculture + offset(log(days_active)),
+		presence ~ s(year, bs = "tp", k = 3) + s(lat, long, bs = "tp", k = 5) + 
+			treecover + aggregation_forest + agriculture + offset(log(days_active))
+	)
+	
+  # Fit models and compute AIC, R-squared, and significance of terms
+  models <- lapply(formulas, function(f) {
+    tryCatch({
+      model <- gam(f, data = dat, family = binomial(link = "logit"))
+      summary <- summary(model)
+      significant_terms <- rownames(summary$p.table)[summary$p.table[, 4] < 0.05]
+      list(model = model, AIC = AIC(model), rsq = summary$r.sq, significant_terms = significant_terms, warning = FALSE)
+    }, error = function(e) {
+      warning(paste("Error fitting model for species:", species, ":", e$message))
+      return(NULL)
+    }, warning = function(w) {
+      warning(paste("Warning in fitting model for species:", species, ":", w$message))
+      return(list(model = NA, AIC = Inf, rsq = NA, significant_terms = NULL, warning = TRUE))
+    })
+  })
+  
+  # Filter out NULL models and models with R-squared >= 0.95 indicating overfitting
+  models <- Filter(function(x) !is.null(x) && !x$warning && x$rsq < 0.95, models)
+  
+  if (length(models) == 0) {
+    return(list(model = NA, data = dat))
+  }
+  
+  # Check if any term is significant across models
+  all_significant_terms <- unique(unlist(lapply(models, function(x) x$significant_terms)))
+  
+  # Select best model based on AIC, but prefer models with significant terms
+  best_model <- models[[which.min(sapply(models, function(x) x$AIC))]]
+  
+  if (!is.null(all_significant_terms)) {
+    significant_models <- Filter(function(x) any(x$significant_terms %in% all_significant_terms), models)
+    if (length(significant_models) > 0) {
+      best_model <- significant_models[[which.min(sapply(significant_models, function(x) x$AIC))]]
+    }
+  }
+  
+  return(list(model = best_model$model, data = dat))
+}
+
+# Get mammal species with >30 captures
+mammal_species <- con1_indep %>%
+	filter(Category %in% c("artiodactyla", "carnivora", "marsupialia",
+												 "perissodactyla", "primates", "rodentia", "xenarthra")) %>%
+	dplyr::select(accepted_bin) %>%
+	distinct()
+
+# Fit GAM models for each species and store the results
+results <- map(mammal_species$accepted_bin, fit_best_gam_model)
+names(results) <- mammal_species$accepted_bin
+
+# Separate the results into two lists: one for models and one for data
+gam_models <- map(results, "model")
+gam_input  <- map(results, "data")
+
+# Remove failed models 
+gam_models <- gam_models[!sapply(gam_models, is.logical)]
+```
+
+## Model interpretation 
+
+Next, we will extract the most relevant information from our occupancy models for species with a sufficient number of observations:  
+
+```{r extract GAM information, echo = TRUE, warning=FALSE}
+# Write function to extract summary information from each model
+extract_gam_info <- function(model) {
+	if (is.logical(model)) {
+		return(tibble(
+			treecover_estimate = NA, treecover_se = NA, treecover_p.val = NA,
+			aggregation_estimate = NA, aggregation_se = NA, aggregation_p.val = NA,
+			agriculture_estimate = NA, agriculture_se = NA, agriculture_p.val = NA,
+			AIC = NA, adj_R_squared = NA, Deviance_explained = NA
+		))
+	}
+	
+	# Get model summary
+	gam_sum <- mgcv::summary.gam(model)
+	
+	# Initialize variables
+	treecover_beta <- treecover_se <- treecover_p <- NA
+	aggregation_beta <- aggregation_se <- aggregation_p <- NA
+	agriculture_beta <- agriculture_se <- agriculture_p <- NA
+	
+	# Check if the terms exist in the model and extract values if they do
+	if ("treecover" %in% rownames(gam_sum$p.table)) {
+		treecover_beta <- gam_sum$p.table["treecover", 1]
+		treecover_se <- gam_sum$p.table["treecover", 2]
+		treecover_p <- gam_sum$p.table["treecover", 4]
+	}
+	if ("aggregation_forest" %in% rownames(gam_sum$p.table)) {
+		aggregation_beta <- gam_sum$p.table["aggregation_forest", 1]
+		aggregation_se <- gam_sum$p.table["aggregation_forest", 2]
+		aggregation_p <- gam_sum$p.table["aggregation_forest", 4]
+	}
+	if ("agriculture" %in% rownames(gam_sum$p.table)) {
+		agriculture_beta <- gam_sum$p.table["agriculture", 1]
+		agriculture_se <- gam_sum$p.table["agriculture", 2]
+		agriculture_p <- gam_sum$p.table["agriculture", 4]
+	}
+	
+	# Extract AIC, R-squared, and deviance explained
+	rsq <- gam_sum$r.sq
+	deviance_explained <- gam_sum$dev.expl
+	aic <- AIC(model)
+	
+	# Combine all information into a tibble
+	model_info <- tibble(
+		treecover_estimate = treecover_beta,
+		treecover_se = treecover_se,
+		treecover_p.val = treecover_p,
+		aggregation_estimate = aggregation_beta,
+		aggregation_se = aggregation_se,
+		aggregation_p.val = aggregation_p,
+		agriculture_estimate = agriculture_beta,
+		agriculture_se = agriculture_se,
+		agriculture_p.val = agriculture_p,
+		AIC = aic,
+		adj_R_squared = rsq,
+		Deviance_explained = deviance_explained
+	)
+	
+	return(model_info)
+}
+# Apply the function to all models in the list and combine the results into a single data frame
+model_summaries <- lapply(gam_models, extract_gam_info) %>%
+	bind_rows(.id = "Model")
+```
+```{r examine model output, echo = FALSE}
+datatable(model_summaries %>%
+  mutate(across(where(is.numeric), round, digits = 3)),
+  options = list(lengthMenu = c(5, 10, 15, 20), pageLength = 5))
+```
+
+The inclusion of agriculture (binary presence/absence of cattle) did not seem to improve any model fit. The inclusion of forest fragmentation expressed through the aggregation index only improved the fit of the **Cerdocyon thous** model, but did not show any significant effect. Treecover consistently improved the model fit compared to a NULL model, and significantly positively affected the occupancy probability of **Leopardus pardalis** (Ocelot), **Panther onca** (Jaguar), and **Tayassu_pecari** (White-lipped peccary). 
+
+Next, we are going to plot the effects of our covariates on the occupancy of every species included: 
+
+```{r plot GAM effetcs, echo=TRUE, warning=FALSE, message=FALSE, fig.width=12, fig.height=20, fig.cap = "Predicted effects of treecover on species occupancy probability"}
+
+# Define the plotting framework 
+generate_plot <- function(model, model_name) {
+	
+	# Extract p-value for the term treecover
+	p_val <- summary.gam(model)
+	p_val <- as.numeric(p_val$pTerms.pv["treecover"])
+	
+	# Check if p-value is significant
+	if (p_val < 0.05) {
+		line_color <- "darkred"
+		ribbon_color <- "darkred"
+	} else {
+		line_color <- "black"
+		ribbon_color <- "black"
+	}
+	
+	# Make predictions
+	pred <- ggpredict(model, terms = "treecover", condition = c(treecover = 1))
+	
+	# Plot predictions
+	p <- ggplot(pred, aes(x, predicted)) +
+		geom_line(color = line_color) +
+		geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.1, fill = ribbon_color) +
+		theme_classic() +
+		xlab("Treecover (%)") +
+		ylab("Predicted Occupancy Probability") +
+		ggtitle(model_name) +  # Label with model name
+		theme(text = element_text(family = "Palatino"))
+	
+	return(p)
+}
+
+# Generate plots for each model
+predictions <- lapply(seq_along(gam_models), function(i) generate_plot(gam_models[[i]], names(gam_models)[i]))
+
+# Combine plots into a grid with common axis labels
+plot_grid(plotlist = predictions, ncol = 3, nrow = 5,
+					align = "hv", axis = "tb", # align plots and set common axis
+					rel_heights = rep(1, length(predictions))) 
+```
+
+## Model validation
+
+Lastly, we check if any of our models have major using qq-plots, fitted vs. residual plots, and observed vs. residual plots.
+
+```{r check model performance, echo=TRUE,fig.width=12, fig.height=25, fig.cap = "Model performance checks"}
+
+
+# Define a function to generate the three plots for each model
+diagnostic_plots <- function(model, model_name) {
+	
+	# Get residuals, fitted and observed values
+	residuals <- resid(model)
+	fitted_values <- fitted(model)
+	observed_values <- model$model$treecover
+	
+	# Build QQ plot
+	qq_plot <- ggplot(data.frame(residuals), aes(sample = residuals)) +
+		stat_qq() +
+		stat_qq_line() +
+		ggtitle(paste(model_name, "- QQ Plot")) +
+		theme_classic() +
+		theme(text = element_text(family = "Palatino"))
+	
+	# Build fitted vs Residuals plot
+	fitted_vs_residuals_plot <- ggplot(data.frame(fitted_values, residuals), aes(x = fitted_values, y = residuals)) +
+		geom_point() +
+		xlab("Fitted values") +
+		ylab("Residuals") +
+		ggtitle(paste(model_name, "- Fitted vs Residuals")) +
+		theme_classic() +
+		theme(text = element_text(family = "Palatino"))
+	
+	# Observed vs Residuals plot
+	observed_vs_residuals_plot <- ggplot(data.frame(observed_values, residuals), aes(x = observed_values, y = residuals)) +
+		geom_point() +
+		xlab("Treecover") +
+		ylab("Residuals") +
+		ggtitle(paste(model_name, "- Observed vs Residuals")) +
+		theme_classic() +
+		theme(text = element_text(family = "Palatino"))
+	
+	# Combine the three plots into one figure
+	combined_plot <- plot_grid(qq_plot, fitted_vs_residuals_plot, observed_vs_residuals_plot, ncol = 3)
+	
+	return(combined_plot)
+}
+
+# Generate plots for each model and combine them into a list
+diagnostics <- lapply(seq_along(gam_models), function(i) diagnostic_plots(gam_models[[i]], names(gam_models)[i]))
+plot_grid(plotlist = diagnostics, ncol = 1, nrow = 13, align = 'v')
+```
+
+The majority of the models behave fairly well. Namely, the *Tayassu pecari* and *sapajus apella* model have some issues in their QQ plots, but given the low sample size there is not much we can do to improve model fit. 
+
+# Conclusion 
+
+Based on the analysis, we may draw the following main conclusions: 
+
+- Treecover generally is the more informative predictor for species occupancy than fragmentation and the presence of agriculture. In the paper, this may be linked to the habitat amount hypothesis (see papers by Fahrig et al.), arguing that habitat configuration is generally subordinate to habitat availability. 
+- Cattle presence (i.e., agriculture) does not seem to affect species occupancy in any way.
+- Large feline species that specialize in forest habitats (Jaguar & Ocelot) show significant responses to tree cover and their occupancy decreases with lower tree cover. The same goes for the white lipped peccary. 
+- Jaguar, ocelot, and peccary are all keystone species, and changes in their occupancy may have long-lasting effects on community composition. 
+- Remotely-sensed data (NDVI in this case) offer a way to investigate responses of species to environmental change, but have their limits. Below-the-surface mechanisms causing changes in species communities may be more important and remain undiscovered when using these methods (see [Green et al. 2020](https://royalsocietypublishing.org/doi/10.1098/rspb.2020.0533)). 
+
+```{r clean environment one last time, echo=FALSE}
+rm(mammal_species, results, diagnostic_plots, extract_gam_info, fit_best_gam_model, generate_plot)
+```
