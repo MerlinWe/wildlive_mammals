@@ -12,7 +12,7 @@ library(scales)
 library(tidyverse)
 
 # read input data
-species <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
+captures <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
 camtraps <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
 camop <- as.matrix(read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camop_problem.csv"))
 covariates <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/forest_covariates.csv")
@@ -20,7 +20,7 @@ covariates <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Co
 # ========= Data Preparation ==========
 
 # clean species data for analysis
-species <- species %>%
+species <- captures %>%
 	filter(Station %in% camtraps$Station) %>%
 	filter(Category %in% c("artiodactyla", "carnivora", "marsupialia", "perissodactyla", "primates", "rodentia", "xenarthra")) %>%
 	filter(DateTimeOriginal >= "2017-01-10 17:01:26") %>%
@@ -36,7 +36,20 @@ species <- species %>%
 		accepted_bin = str_replace_all(accepted_bin, "\\)", ""),
 		accepted_bin = str_replace_all(accepted_bin, "\\/", "_")
 	) %>%
-	select(-Batch)
+	# Make sure all data is identified to the species level 
+	filter(complete.cases(Species)) %>%
+	select(-Batch) %>%
+	
+	# Assess temporal independence - Arrange by station, name and time 
+	arrange(Station, accepted_bin, DateTimeOriginal) %>%
+	# Calculate the time difference between consecutive captures of the same species at the same station 
+	group_by(Station, accepted_bin) %>%
+	mutate(delta_time = difftime(DateTimeOriginal, lag(DateTimeOriginal), units = "mins")) %>%
+	# Keep only the captures that are at least 30 minutes apart from the last capture of the same species
+	filter(is.na(delta_time) | delta_time >= 30) %>%
+	ungroup() %>%
+	# Remove the temporary delta_time column
+	select(-delta_time) 
 
 # Integrate pantheria traits, see which traits predict which response
 pantheria <- read.table(
@@ -72,6 +85,10 @@ species_traits <- pantheria %>%
 				 activity_cycle, diet_breadth, habitat_breadth,
 				 terrestriality, trophic_level)
 
+species_traits[5,4]  <-  0.02 # dasyprocta_punctata
+species_traits[8,4]  <-  1.1  # cuniculus_paca
+species_traits[13,4] <-  2  # mazama_gouazoubira
+species_traits[22,4] <-  8.3  # tapirus_terrestris
 
 # ========= Occupancy Analysis =========
 
@@ -143,10 +160,11 @@ site_covs <- covariates %>%
 	mutate(
 		treecover_z = scale(treecover)[,1],
 		edge_density_z = scale(edge_density_forest)[,1],
-		patch_density_z = scale(patch_density_forest)[,1]
+		patch_density_z = scale(patch_density_forest)[,1],
+		shape_index_z = scale(shape_index_forest)[,1]
 	) %>%
-	arrange(match(site_year, dimnames(detection_array)[[2]])) %>%  # <- sort to match detection_array
-	select(treecover_z, edge_density_z, patch_density_z) %>%
+	arrange(match(site_year, dimnames(detection_array)[[2]])) %>%  #
+	select(treecover_z, edge_density_z, patch_density_z, shape_index_z) %>%
 	as.data.frame()
 
 rownames(site_covs) <- dimnames(detection_array)[[2]]
@@ -194,17 +212,60 @@ ms_model_patch <- msPGOcc(
 	verbose = TRUE
 )
 
+# Fit the model with shape index
+ms_model_shape <- msPGOcc(
+	occ.formula = ~ treecover_z + shape_index_z,
+	det.formula = ~ 1,
+	data = list(
+		y = detection_array,
+		occ.covs = site_covs
+	),
+	n.samples = 15000,
+	n.burn = 2000,
+	n.thin = 10,
+	n.chains = 3,
+	verbose = TRUE
+)
+
 # See which model is best 
 waic_edge <- spOccupancy::waicOcc(ms_model_edge)
 waic_patch <- spOccupancy::waicOcc(ms_model_patch)
+waic_shape <- spOccupancy::waicOcc(ms_model_shape)
 
-waic_edge["WAIC"]
-waic_patch["WAIC"]
-waic_patch["WAIC"] - waic_edge["WAIC"]
+waic_edge
+waic_patch
+waic_shape
 
-# A ΔWAIC of > 10 is strong evidence that the model with treecover_z + edge_density_z is better than the one with patch density. 
+cor(site_covs$patch_density_z, site_covs$edge_density_z) 
+cor(site_covs$patch_density_z, site_covs$shape_index_z)
+cor(site_covs$edge_density_z, site_covs$shape_index_z)
 
-## ----- Check if we need an interaction term -----
+cor(site_covs$treecover_z, site_covs$edge_density_z)
+cor(site_covs$treecover_z, site_covs$patch_density_z)
+cor(site_covs$treecover_z, site_covs$shape_index_z)
+
+# the model with edge and patch variables are equally good based on the WAIC, the shape index performs worse.
+# because we definitely want to keep tree cover in the model we continue with edge density since this is less
+# correlated with tree cover than patch density. We can check if including shape index additively does any good: 
+
+ms_model_edge_and_shape <- msPGOcc(
+	occ.formula = ~ treecover_z + edge_density_z + shape_index_z,
+	det.formula = ~ 1,
+	data = list(
+		y = detection_array,
+		occ.covs = site_covs
+	),
+	n.samples = 15000,
+	n.burn = 2000,
+	n.thin = 10,
+	n.chains = 3,
+	verbose = TRUE
+)
+
+waic_edge_shape <- spOccupancy::waicOcc(ms_model_edge_and_shape)
+waic_edge_shape
+
+# No, much worse. treecover + edge density is the top model. We now check if we need an interaction term.
 
 ms_model_edge_interaction <- msPGOcc(
 	occ.formula = ~ treecover_z * edge_density_z,
@@ -221,46 +282,19 @@ ms_model_edge_interaction <- msPGOcc(
 )
 
 waic_edge_interaction <- spOccupancy::waicOcc(ms_model_edge_interaction)
-
-# Compare models
 waic_edge_interaction["WAIC"] - waic_edge["WAIC"]
 
 # The interaction model is worse by over 8 WAIC points than the additive model. 
-# That’s strong support to drop the interaction between treecover_z and edge_density_z.
-# We have strong model selection evidence that the interaction term is not improving the model sufficiently.
-# We drop it for parsimony.
+# That’s support to drop the interaction between treecover_z and edge_density_z, we drop it for parsimony.
 
-rm(ms_model_edge_interaction, ms_model_patch) # remove bad models
 ms_model <- ms_model_edge
+rm(ms_model_edge_interaction, ms_model_patch, ms_model_shape, ms_model_edge_and_shape, ms_model_edge) # remove bad models
 
 summary(ms_model, level = 'community')
 summary(ms_model, level = 'species')
 summary(ms_model, level = "community")$beta.comm
 summary(ms_model, level = "species")$beta
 psi <- fitted(ms_model)
-
-# Interpretation:
-# •	Tree cover has a moderate positive effect on occupancy across the community. The 95% CI just includes zero (i.e. borderline support), but the posterior median is clearly positive.
-# •	Edge density also has a positive effect, but with more uncertainty and a wider CI crossing zero more comfortably.
-
-# Caveats:
-# •	Neither covariate is definitively “significant” in a classical p-value sense but Bayesian models don’t rely on that.
-# •	Instead, we focus on effect size magnitudes and the directional consistency across species.
-
-# Tree Cover (treecover_z):
-# •	Strong positive responders: Panthera onca, Tapirus terrestris, Myrmecophaga tridactyla, Dasyprocta, Mazama gouazoubira
-# •	Neutral or weak effects for many others, but very few show negative trends.
-
-# Edge Density (edge_density_z):
-# •	Strong positive: Tayassu pecari, Sciurus ignitus, Didelphis marsupialis
-# •	Negative: Cerdocyon thous, Panthera onca, Leopardus pardalis (but all with wide CIs)
-
-# These trends hint that some species may prefer fragmented edges or tolerate them, while others might be sensitive to fragmentation even when forest cover is high.
-
-# •	Variability in response to edge density is nearly double that for tree cover.
-# •	This suggests species differ more in how they respond to fragmentation than to raw forest amount — strong motivation for trait filtering
-
-# But big variation in detection probability across species — e.g., Mazama gouazoubira has high detectability, Hydrochoerus and Puma yagouaroundi low. That’s fine.
 
 # Extract posterior summary stats for coefficients
 beta_samples <- ms_model$beta.samples
@@ -291,6 +325,16 @@ coef_traits <- ms_model$beta.samples %>%
 				 log_mass, log_range, diet_breadth,
 				 activity_cycle_coded, habitat_breadth_coded)
 
+# Add standard deviations to the coeff dtata
+beta_sds <- beta_summary %>%
+	as.data.frame() %>%
+	rownames_to_column("term") %>%
+	separate(term, into = c("covariate", "species"), sep = "-", extra = "merge") %>%
+	select(covariate, species, SD = SD)
+
+coef_traits <- coef_traits %>%
+	left_join(beta_sds, by = c("covariate", "species"))
+
 # Run trait ~ coefficient regressions across covariates
 trait_vars <- c("log_mass", "log_range", "diet_breadth",
 								"activity_cycle_coded", "habitat_breadth_coded")
@@ -301,6 +345,12 @@ results <- map_dfr(unique(coef_traits$covariate), function(cov) {
 	map_dfr(trait_vars, function(trait) {
 		formula <- as.formula(paste0("Mean ~ ", trait))
 		mod <- lm(formula, data = dat)
+		
+		# Plot diagnostic plots
+		par(mfrow = c(2, 2))  # 2x2 plot layout
+		plot(mod, main = paste("Diagnostics:", trait, "on", cov))
+		
+		# Return the tidy results
 		tidy(mod) %>%
 			filter(term != "(Intercept)") %>%
 			mutate(covariate = cov, trait = trait)
@@ -319,6 +369,15 @@ results <- results %>%
 
 results$covariate <- factor(results$covariate,
 														levels = c("treecover_z", "edge_density_z"))
+
+# Add significance flags for p-values
+results <- results %>%
+	mutate(sig_label = case_when(
+		p.value < 0.001 ~ "***",
+		p.value < 0.01  ~ "**",
+		p.value < 0.05  ~ "*",
+		TRUE            ~ ""
+	))
 
 # Update the community-level effect plot as well
 beta_comm <- ms_model$beta.comm.samples %>%
@@ -348,6 +407,7 @@ comm_plot <- ggplot(beta_comm, aes(x = term, y = Mean, ymin = `2.5%`, ymax = `97
 	theme_bw() +
 	theme(axis.text.x = element_text(angle = 45, hjust = 1),
 				text = element_text(size = 10),
+				title = element_text(size = 10),
 				legend.position = "none")
 
 # Individual trait plots per covariate
@@ -358,12 +418,15 @@ traits_treecover <- results %>%
 						 color = trait)) +
 	geom_hline(yintercept = 0, linetype = "dashed") +
 	geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
-	scale_color_viridis_d() +
+	geom_text(aes(label = sig_label, y = estimate + std.error + 0.02), 
+						size = 4, vjust = 0, show.legend = FALSE) +
+	scale_color_viridis_d(end = .95) +
 	labs(title = "(b.) Trait responses - Forest Cover", 
 			 x = NULL, y = "Effect size (slope estimate ± SE)") +
 	theme_bw() +
 	theme(axis.text.x = element_text(angle = 45, hjust = 1),
 				text = element_text(size = 10),
+				title = element_text(size = 10),
 				legend.position = "none")
 
 traits_fragmentation <- results %>%
@@ -373,22 +436,26 @@ traits_fragmentation <- results %>%
 						 color = trait)) +
 	geom_hline(yintercept = 0, linetype = "dashed") +
 	geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
-	scale_color_viridis_d() +
+	geom_text(aes(label = sig_label, y = estimate + std.error + 0.02), 
+						size = 4, vjust = 0, show.legend = FALSE) +
+	scale_color_viridis_d(end = .95) +
 	labs(title = "(c.) Trait responses - Edge Density", 
 			 x = NULL, y = "Effect size (slope estimate ± SE)") +
 	theme_bw() +
 	theme(axis.text.x = element_text(angle = 45, hjust = 1),
 				text = element_text(size = 10),
+				title = element_text(size = 10),
 				legend.position = "none")
 
-effects_plot <- (comm_plot) / (traits_treecover) / (traits_fragmentation) 
+effects_plot <- (comm_plot | (traits_treecover / traits_fragmentation)) + 
+	plot_layout(widths = c(1.3, 2)) 
 
 ggsave("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig2.png", 
 			 effects_plot, 
-			 width = 120,
-			 height = 200, 
+			 width = 200,
+			 height = 140, 
 			 units = "mm",
-			 dpi = 600)
+			 dpi = 400)
 
 ## ========== PDP Analysis ==========
 
@@ -404,17 +471,16 @@ focal_species <- c("panthera_onca", "tayassu_pecari", "mazama_gouazoubira", "cer
 focal_ids <- match(focal_species, species_names)
 stopifnot(!any(is.na(focal_ids)))  # safety check
 
-# Define a robust PDP function
+# Define PDP function
 get_pdp <- function(predictor, predictor_seq, species_ids, species_names, ms_model) {
 	n_vals <- length(predictor_seq)
 	
 	cov_data <- data.frame(
 		treecover_z   = if (predictor == "treecover_z") predictor_seq else rep(0, n_vals),
-		aggregation_z = if (predictor == "aggregation_z") predictor_seq else rep(0, n_vals),
-		agriculture   = if (predictor == "agriculture") predictor_seq else rep(0, n_vals)
+		edge_density_z = if (predictor == "edge_density_z") predictor_seq else rep(0, n_vals)
 	)
 	
-	X.0 <- model.matrix(~ treecover_z + aggregation_z + agriculture, data = cov_data)
+	X.0 <- model.matrix(~ treecover_z + edge_density_z, data = cov_data)
 	pred <- predict(ms_model, X.0 = X.0, type = "occupancy", ignore.RE = FALSE)
 	
 	pdp_df <- map_dfr(seq_along(species_ids), function(i) {
@@ -434,10 +500,9 @@ get_pdp <- function(predictor, predictor_seq, species_ids, species_names, ms_mod
 
 # Generate PDPs for focal species
 pdp_tree_focal <- get_pdp("treecover_z", tree_seq, focal_ids, species_names, ms_model)
-pdp_frag_focal <- get_pdp("aggregation_z", frag_seq, focal_ids, species_names, ms_model)
-pdp_agri_focal <- get_pdp("agriculture", agri_seq, focal_ids, species_names, ms_model)
+pdp_frag_focal <- get_pdp("edge_density_z", frag_seq, focal_ids, species_names, ms_model)
 
-pdp_focal_all <- bind_rows(pdp_tree_focal, pdp_frag_focal, pdp_agri_focal)
+pdp_focal_all <- bind_rows(pdp_tree_focal, pdp_frag_focal)
 
 # Plot focal PDPs
 
@@ -451,14 +516,13 @@ species_labels <- c(
 # Order predictors for facets
 pdp_focal_all$predictor <- factor(
 	pdp_focal_all$predictor,
-	levels = c("agriculture", "treecover_z", "aggregation_z")
+	levels = c("treecover_z", "edge_density_z")
 )
 
 # Labels
 predictor_labels <- c(
-	agriculture = "Agriculture (binary)",
-	treecover_z = "Forest cover (z-score)",
-	aggregation_z = "Fragmentation (z-score)"
+	treecover_z = "Tree cover (z-score)",
+	edge_density_z = "Edge Density (z-score)"
 )
 
 # Recode species column
@@ -486,18 +550,19 @@ pdp_focal_plot <- ggplot(pdp_focal_all, aes(x = value, y = mean, ymin = lower, y
 
 ggsave("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig3.png", 
 			 pdp_focal_plot, 
-			 width = 180,
+			 width = 140,
 			 height = 180, 
 			 units = "mm",
-			 dpi = 600)
+			 dpi = 400)
 
 # Generate PDPs for ALL species (for supplementary)
-all_ids <- seq_along(species_names)
-pdp_all_tree <- get_pdp("treecover_z", tree_seq, all_ids, species_names, ms_model)
-pdp_all_frag <- get_pdp("aggregation_z", frag_seq, all_ids, species_names, ms_model)
-pdp_all_agri <- get_pdp("agriculture", agri_seq, all_ids, species_names, ms_model)
+all_species_names <- unique(species$accepted_bin)
+all_ids <- seq_along(all_species_names)
 
-pdp_all <- bind_rows(pdp_all_tree, pdp_all_frag, pdp_all_agri)
+pdp_all_tree <- get_pdp("treecover_z", tree_seq, all_ids, all_species_names, ms_model)
+pdp_all_frag <- get_pdp("edge_density_z", frag_seq, all_ids, all_species_names, ms_model)
+
+pdp_all <- bind_rows(pdp_all_tree, pdp_all_frag)
 
 # Rename predictors for display
 pdp_all <- pdp_all %>%
@@ -505,8 +570,7 @@ pdp_all <- pdp_all %>%
 		species = tools::toTitleCase(gsub("_", " ", species)),
 		predictor = recode(predictor,
 											 treecover_z   = "Forest cover",
-											 aggregation_z = "Fragmentation",
-											 agriculture   = "Agriculture"
+											 edge_density_z = "Edge Density"
 		),
 		facet_label = paste0(species, "\n(", predictor, ")")
 	)
@@ -521,7 +585,7 @@ pdp_all_plot <- ggplot(pdp_all, aes(x = value, y = mean, ymin = lower, ymax = up
 	geom_line() +
 	scale_fill_viridis_d(end = .8) +
 	scale_colour_viridis_d(end = .8) +
-	facet_wrap(~ facet_label, nrow = 9, ncol = 8, scales = "free") +  
+	facet_wrap(~ facet_label, nrow = 7, ncol = 6, scales = "free") +  
 	labs(
 		x = "Covariate value", y = "Predicted occupancy probability"
 	) +
