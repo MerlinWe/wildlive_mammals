@@ -14,15 +14,16 @@ library(tidybayes)
 library(tidyverse)
 
 # read input data
-species <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
-camtraps <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
-camop <- as.matrix(read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/camop_problem.csv"))
-covariates <- read_csv("/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/forest_covariates.csv")
+captures <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
+camtraps <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
+camop <- as.matrix(read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/camop_problem.csv"))
+covariates <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/forest_covariates.csv")
 
 # ========= Data Preparation ==========
 
 # clean species data for analysis
-species <- species %>%
+species <- captures %>%
+  
 	filter(Station %in% camtraps$Station) %>%
 	filter(Category %in% c("artiodactyla", "carnivora", "marsupialia", "perissodactyla", "primates", "rodentia", "xenarthra")) %>%
 	filter(DateTimeOriginal >= "2017-01-10 17:01:26") %>%
@@ -55,7 +56,7 @@ species <- species %>%
 
 # Integrate pantheria traits, see which traits predict which response
 pantheria <- read.table(
-	file = "/Users/serpent/Documents/Senckenberg/WildLive/Mammals/Code/Data/PanTHERIA.txt",
+	file = "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/PanTHERIA.txt",
 	header = TRUE, sep = "\t", na.strings = c("-999", "-999.00")) %>%
 	as_tibble() %>%
 	select(
@@ -153,17 +154,19 @@ dim(detection_array)
 site_years <- dimnames(detection_array)[[2]]
 
 site_covs <- covariates %>%
-	mutate(site_year = paste(station, year, sep = "_")) %>%
-	filter(site_year %in% dimnames(detection_array)[[2]]) %>%
-	mutate(
-		treecover_z = scale(treecover)[,1],
-		edge_density_z = scale(edge_density_forest)[,1],
-		patch_density_z = scale(patch_density_forest)[,1],
-		shape_index_z = scale(shape_index_forest)[,1]
-	) %>%
-	arrange(match(site_year, dimnames(detection_array)[[2]])) %>%  #
-	select(treecover_z, edge_density_z, patch_density_z, shape_index_z) %>%
-	as.data.frame()
+  mutate(site_year = paste(station, year, sep = "_")) %>%
+  filter(site_year %in% dimnames(detection_array)[[2]]) %>%
+  group_by(year) %>%
+  mutate(
+    treecover_z = as.numeric(scale(treecover)),
+    edge_density_z = as.numeric(scale(edge_density_forest)),
+    patch_density_z = as.numeric(scale(patch_density_forest)),
+    shape_index_z = as.numeric(scale(shape_index_forest))
+  ) %>%
+  ungroup() %>%
+  arrange(match(site_year, dimnames(detection_array)[[2]])) %>%
+  select(treecover_z, edge_density_z, patch_density_z, shape_index_z) %>%
+  as.data.frame()
 
 rownames(site_covs) <- dimnames(detection_array)[[2]]
 
@@ -182,59 +185,55 @@ dimnames(detection_array)[[3]] <- paste0("Month", 1:dim(detection_array)[3])
 
 # Fit the model with edge density
 ms_model_edge <- msPGOcc(
-	occ.formula = ~ treecover_z + edge_density_z,
-	det.formula = ~ 1,
-	data = list(
-		y = detection_array,
-		occ.covs = site_covs
-	),
-	n.samples = 15000,
-	n.burn = 2000,
-	n.thin = 10,
-	n.chains = 3,
-	verbose = TRUE
+  occ.formula = ~ treecover_z + edge_density_z,
+  det.formula = ~1,
+  data = list(
+    y = detection_array,
+    occ.covs = site_covs
+  ),
+  n.samples = 15000,
+  n.burn = 2000,
+  n.thin = 10,
+  n.chains = 3,
+  verbose = TRUE
 )
 
 # Fit the model with patch density
 ms_model_patch <- msPGOcc(
-	occ.formula = ~ treecover_z + patch_density_z,
-	det.formula = ~ 1,
-	data = list(
-		y = detection_array,
-		occ.covs = site_covs
-	),
-	n.samples = 15000,
-	n.burn = 2000,
-	n.thin = 10,
-	n.chains = 3,
-	verbose = TRUE
+  occ.formula = ~ treecover_z + patch_density_z,
+  det.formula = ~1,
+  data = list(
+    y = detection_array,
+    occ.covs = site_covs
+  ),
+  n.samples = 15000,
+  n.burn = 2000,
+  n.thin = 10,
+  n.chains = 3,
+  verbose = TRUE
 )
 
 # Fit the model with shape index
 ms_model_shape <- msPGOcc(
-	occ.formula = ~ treecover_z + shape_index_z,
-	det.formula = ~ 1,
-	data = list(
-		y = detection_array,
-		occ.covs = site_covs
-	),
-	n.samples = 15000,
-	n.burn = 2000,
-	n.thin = 10,
-	n.chains = 3,
-	verbose = TRUE
+  occ.formula = ~ treecover_z + shape_index_z,
+  det.formula = ~1,
+  data = list(
+    y = detection_array,
+    occ.covs = site_covs
+  ),
+  n.samples = 15000,
+  n.burn = 2000,
+  n.thin = 10,
+  n.chains = 3,
+  verbose = TRUE
 )
 
-# See which model is best 
+# See which model is best
 waic_edge <- spOccupancy::waicOcc(ms_model_edge)
 waic_patch <- spOccupancy::waicOcc(ms_model_patch)
 waic_shape <- spOccupancy::waicOcc(ms_model_shape)
 
-waic_edge
-waic_patch
-waic_shape
-
-cor(site_covs$patch_density_z, site_covs$edge_density_z) 
+cor(site_covs$patch_density_z, site_covs$edge_density_z)
 cor(site_covs$patch_density_z, site_covs$shape_index_z)
 cor(site_covs$edge_density_z, site_covs$shape_index_z)
 
@@ -244,52 +243,67 @@ cor(site_covs$treecover_z, site_covs$shape_index_z)
 
 # the model with edge and patch variables are equally good based on the WAIC, the shape index performs worse.
 # because we definitely want to keep tree cover in the model we continue with edge density since this is less
-# correlated with tree cover than patch density. We can check if including shape index additively does any good: 
+# correlated with tree cover than patch density. We can check if including shape index additively does any good:
 
 ms_model_edge_and_shape <- msPGOcc(
-	occ.formula = ~ treecover_z + edge_density_z + shape_index_z,
-	det.formula = ~ 1,
-	data = list(
-		y = detection_array,
-		occ.covs = site_covs
-	),
-	n.samples = 15000,
-	n.burn = 2000,
-	n.thin = 10,
-	n.chains = 3,
-	verbose = TRUE
+  occ.formula = ~ treecover_z + edge_density_z + shape_index_z,
+  det.formula = ~1,
+  data = list(
+    y = detection_array,
+    occ.covs = site_covs
+  ),
+  n.samples = 15000,
+  n.burn = 2000,
+  n.thin = 10,
+  n.chains = 3,
+  verbose = TRUE
 )
 
 waic_edge_shape <- spOccupancy::waicOcc(ms_model_edge_and_shape)
-waic_edge_shape
 
 # No, much worse. treecover + edge density is the top model. We now check if we need an interaction term.
 
 ms_model_edge_interaction <- msPGOcc(
-	occ.formula = ~ treecover_z * edge_density_z,
-	det.formula = ~ 1,
-	data = list(
-		y = detection_array,
-		occ.covs = site_covs
-	),
-	n.samples = 15000,
-	n.burn = 2000,
-	n.thin = 10,
-	n.chains = 3,
-	verbose = TRUE
+  occ.formula = ~ treecover_z * edge_density_z,
+  det.formula = ~1,
+  data = list(
+    y = detection_array,
+    occ.covs = site_covs
+  ),
+  n.samples = 15000,
+  n.burn = 2000,
+  n.thin = 10,
+  n.chains = 3,
+  verbose = TRUE
 )
 
 waic_edge_interaction <- spOccupancy::waicOcc(ms_model_edge_interaction)
-waic_edge_interaction["WAIC"] - waic_edge["WAIC"]
 
-# The interaction model is worse by over 8 WAIC points than the additive model. 
-# That’s support to drop the interaction between treecover_z and edge_density_z, we drop it for parsimony.
 
-ms_model <- ms_model_edge
+tibble(
+  model = c("Treecover:Edge Density", 
+            "Treecover + Edge Density", 
+            "Treecover + Patch Density", 
+            "Treecover + Shape Index", 
+            "Treecover + Edge Density + Shape Index"),
+  
+  WAIC = c(waic_edge_interaction["WAIC"], 
+           waic_edge["WAIC"], 
+           waic_patch["WAIC"], 
+           waic_shape["WAIC"], 
+           waic_edge_shape["WAIC"])) %>%
+  arrange(WAIC)
+
+# The additive model is worse by over 9 WAIC points than the interactive model.
+# That’s support to keep the interaction between treecover_z and edge_density_z.
+
+ms_model <- ms_model_edge_interaction
+
 rm(ms_model_edge_interaction, ms_model_patch, ms_model_shape, ms_model_edge_and_shape, ms_model_edge) # remove bad models
 
-summary(ms_model, level = 'community')
-summary(ms_model, level = 'species')
+
+summary(ms_model, level = "community")
+summary(ms_model, level = "species")
 summary(ms_model, level = "community")$beta.comm
 summary(ms_model, level = "species")$beta
 psi <- fitted(ms_model)
@@ -299,41 +313,41 @@ beta_samples <- ms_model$beta.samples
 beta_summary <- as.data.frame(summary(beta_samples)$statistics)
 beta_ci <- as.data.frame(summary(beta_samples)$quantiles)
 
-## ========== Trait-Filtering ==========
-
 # Prepare posterior summaries and join with trait data
 coef_traits <- ms_model$beta.samples %>%
-	summary() %>%
-	{
-		bind_cols(
-			as.data.frame(.$statistics) %>% select(Mean = Mean),
-			as.data.frame(.$quantiles) %>% select(`2.5%`, `97.5%`)
-		)
-	} %>%
-	rownames_to_column("term") %>%
-	separate(term, into = c("covariate", "species"), sep = "-", extra = "merge") %>%
-	filter(covariate %in% c("treecover_z", "edge_density_z")) %>%
-	left_join(species_traits, by = c("species" = "accepted_bin")) %>%
-	mutate(
-		log_mass = log(adult_body_mass_g),
-		log_range = log(home_range_km2),
-		diet_breadth = as.numeric(diet_breadth),
-		activity_cycle_coded = recode(activity_cycle, `1` = -1, `3` = 0, `2` = 1),
-		habitat_breadth_coded = rescale(habitat_breadth, to = c(-1, 1))
-	) %>%
-	select(covariate, species, Mean, `2.5%`, `97.5%`,
-				 log_mass, log_range, diet_breadth,
-				 activity_cycle_coded, habitat_breadth_coded)
+  summary() %>%
+  {
+    bind_cols(
+      as.data.frame(.$statistics) %>% select(Mean = Mean),
+      as.data.frame(.$quantiles) %>% select(`2.5%`, `97.5%`)
+    )
+  } %>%
+  rownames_to_column("term") %>%
+  separate(term, into = c("covariate", "species"), sep = "-", extra = "merge") %>%
+  filter(covariate %in% c("treecover_z", "edge_density_z", "treecover_z:edge_density_z")) %>%
+  left_join(species_traits, by = c("species" = "accepted_bin")) %>%
+  dplyr::mutate(
+    log_mass = log(adult_body_mass_g),
+    log_range = log(home_range_km2),
+    diet_breadth = as.numeric(diet_breadth),
+    activity_cycle_coded = dplyr::recode(activity_cycle, `1` = -1, `3` = 0, `2` = 1),
+    habitat_breadth_coded = scales::rescale(habitat_breadth, to = c(-1, 1))
+  ) %>%
+  dplyr::select(
+    covariate, species, Mean, `2.5%`, `97.5%`,
+    log_mass, log_range, diet_breadth,
+    activity_cycle_coded, habitat_breadth_coded
+  )
 
 # Add standard deviations to the coeff dtata
 beta_sds <- beta_summary %>%
-	as.data.frame() %>%
-	rownames_to_column("term") %>%
-	separate(term, into = c("covariate", "species"), sep = "-", extra = "merge") %>%
-	select(covariate, species, SD = SD)
+  as.data.frame() %>%
+  rownames_to_column("term") %>%
+  separate(term, into = c("covariate", "species"), sep = "-", extra = "merge") %>%
+  select(covariate, species, SD = SD)
 
 coef_traits <- coef_traits %>%
-	left_join(beta_sds, by = c("covariate", "species"))
+  left_join(beta_sds, by = c("covariate", "species"))
 
 # Create a function for running brms per trait
 run_bayes_trait_model <- function(df, covariate_name, trait_name) {
@@ -381,11 +395,35 @@ bayes_results <- pmap_dfr(
 												 habitat_breadth_coded = "Habitat breadth"),
 		covariate = recode(cov,
 											 treecover_z = "Forestcover",
-											 edge_density_z = "Edge Density")
+											 edge_density_z = "Edge Density",
+											 `treecover_z:edge_density_z` = "Interaction")
 	)
 
 
 # --- Build plot ---
+
+# Update the community-level effect plot as well
+beta_comm <- ms_model$beta.comm.samples %>%
+  summary() %>%
+  {
+    bind_cols(
+      as.data.frame(.$statistics) %>% select(Mean = Mean),
+      as.data.frame(.$quantiles) %>% select(`2.5%`, `97.5%`)
+    )
+  } %>%
+  rownames_to_column("term") %>%
+  filter(term != "(Intercept)") %>%
+  mutate(term = dplyr::recode(term,
+                              "edge_density_z" = "Edge Density",
+                              "treecover_z" = "Forest Cover",
+                              "treecover_z:edge_density_z" = "Interaction"
+  )) %>%
+  mutate(sig_label = ifelse(`2.5%` > 0 | `97.5%` < 0, "*", ""))
+
+beta_comm$term <- factor(beta_comm$term,
+                         levels = c("Forest Cover", "Edge Density", "Interaction")
+)
+
 
 # Summarize community effects (no trait filtering)
 comm_plot_data <- beta_comm %>%
@@ -416,6 +454,18 @@ trait_slopes <- bayes_results %>%
 	mean_qi(.value, .width = 0.95) %>%
 	ungroup()
 
+traits_interaction <- trait_slopes %>%
+  filter(covariate == "Interaction") %>%
+  ggplot(aes(x = trait_label, y = .value, ymin = .lower, ymax = .upper, color = trait_label)) +
+  geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_color_viridis_d(option = "magma", end = 0.8) +
+  labs(title = "(b) Trait responses to Interaction",
+       x = NULL, y = "Slope (posterior mean ± 95% CI)") +
+  theme_bw(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
 # Tree cover trait plot
 traits_treecover <- trait_slopes %>%
 	filter(covariate == "Forestcover") %>%
@@ -442,8 +492,8 @@ traits_edge <- trait_slopes %>%
 	theme(axis.text.x = element_text(angle = 45, hjust = 1),
 				legend.position = "none")
 
-final_plot <- (comm_plot) | (traits_treecover) / (traits_edge)
-final_plot
+effects_plot <- ((comm_plot / traits_treecover) | (traits_interaction / traits_edge)) 
+effects_plot
 
 # Check probabilities of positive effects
 bayes_results %>%

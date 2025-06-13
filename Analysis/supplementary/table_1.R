@@ -130,9 +130,7 @@ summary_table_fmt <- summary_table %>%
 
 # Extract posterior slopes for fragmentation and agriculture
 beta_frag <- as.data.frame(ms_model$beta.samples) %>%
-	select(starts_with("aggregation_z-"))
-beta_agri <- as.data.frame(ms_model$beta.samples) %>%
-	select(starts_with("agriculture-"))
+	select(starts_with("edge_density_z-"))
 
 # Summarize posterior stats 
 summarise_posterior <- function(beta_df) {
@@ -155,9 +153,6 @@ summarise_posterior <- function(beta_df) {
 frag_summary <- summarise_posterior(beta_frag) %>%
 	rename(beta_frag_mean = mean, beta_frag_lower = lower, beta_frag_upper = upper) 
 
-agri_summary <- summarise_posterior(beta_agri) %>%
-	rename(beta_agri_mean = mean, beta_agri_lower = lower, beta_agri_upper = upper) 
-
 fix_species_case <- function(name) {
 	parts <- strsplit(name, " ")[[1]]
 	if (length(parts) == 2) {
@@ -171,25 +166,26 @@ fix_species_case <- function(name) {
 frag_summary <- frag_summary %>%
 	mutate(latin_name = sapply(latin_name, fix_species_case))
 
-agri_summary <- agri_summary %>%
-	mutate(latin_name = sapply(latin_name, fix_species_case))
-
 frag_summary        <- add_sig_flag(frag_summary, "beta_frag_mean", "beta_frag_lower", "beta_frag_upper", "sig_frag")
-agri_summary        <- add_sig_flag(agri_summary, "beta_agri_mean", "beta_agri_lower", "beta_agri_upper", "sig_agri")
 
 
 summary_table_full <- summary_table_fmt %>%
-	left_join(frag_summary, by = "latin_name") %>%
-	left_join(agri_summary, by = "latin_name")
+	left_join(frag_summary, by = "latin_name")
 
 summary_table_full
 
+# Format estimate with 95% CI and significance flag
+format_estimate <- function(mean, lower, upper, sig) {
+  ifelse(
+    is.na(mean), NA,
+    sprintf("%.2f [%.2f, %.2f]%s", mean, lower, upper, sig)
+  )
+}
 
 summary_table_final <- summary_table_full %>%
 	mutate(
 		`β Forest cover`     = format_estimate(beta_mean, beta_lower, beta_upper, sig_forest),
 		`β Fragmentation`    = format_estimate(beta_frag_mean, beta_frag_lower, beta_frag_upper, sig_frag),
-		`β Agriculture`      = format_estimate(beta_agri_mean, beta_agri_lower, beta_agri_upper, sig_agri)
 	) %>%
 	select(
 		`Common name` = common_name,
@@ -201,37 +197,6 @@ summary_table_final <- summary_table_full %>%
 		`Modelled Ψ` = mean_psi,
 		`Naïve p` = naive_p,
 		`β Forest cover`,
-		`β Fragmentation`,
-		`β Agriculture`
-	)
+		`β Fragmentation`)
 
-# Format estimate with 95% CI and significance flag
-format_estimate <- function(mean, lower, upper, sig) {
-	ifelse(
-		is.na(mean), NA,
-		sprintf("%.2f [%.2f, %.2f]%s", mean, lower, upper, sig)
-	)
-}
-
-# Assemble final display table
-summary_table_final <- summary_table_full %>%
-	mutate(
-		`β Forest cover` = format_estimate(beta_mean, beta_lower, beta_upper, sig_forest),
-		`β Fragmentation` = format_estimate(beta_frag_mean, beta_frag_lower, beta_frag_upper, sig_frag),
-		`β Agriculture` = format_estimate(beta_agri_mean, beta_agri_lower, beta_agri_upper, sig_agri)
-	) %>%
-	select(
-		`Common name` = common_name,
-		`Latin name` = latin_name,
-		`Detections` = n_captures,
-		`Stations` = n_stations,
-		`Capture rate` = capture_rate,
-		`Naïve Ψ` = naive_psi,
-		`Modelled Ψ` = mean_psi,
-		`Naïve p` = naive_p,
-		`β Forest cover`,
-		`β Fragmentation`,
-		`β Agriculture`
-	)
-
-write_csv(summary_table_final, file = "/Users/serpent/Desktop/Paper/summary_table.csv")
+write_csv(summary_table_final, file = "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/summary_table1.csv")
