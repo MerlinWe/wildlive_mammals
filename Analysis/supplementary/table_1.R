@@ -124,10 +124,6 @@ summary_table_fmt <- summary_table %>%
 	)
 
 
-
-
-
-
 # Extract posterior slopes for fragmentation and agriculture
 beta_frag <- as.data.frame(ms_model$beta.samples) %>%
 	select(starts_with("edge_density_z-"))
@@ -162,6 +158,7 @@ fix_species_case <- function(name) {
 	}
 }
 
+
 # Apply to both summaries
 frag_summary <- frag_summary %>%
 	mutate(latin_name = sapply(latin_name, fix_species_case))
@@ -182,21 +179,36 @@ format_estimate <- function(mean, lower, upper, sig) {
   )
 }
 
+# Extract posterior slopes for interaction term
+beta_inter <- as.data.frame(ms_model$beta.samples) %>%
+  select(starts_with("treecover_z:edge_density_z-"))
+
+inter_summary <- summarise_posterior(beta_inter) %>%
+  rename(beta_inter_mean = mean, beta_inter_lower = lower, beta_inter_upper = upper) %>%
+  mutate(latin_name = sapply(latin_name, fix_species_case)) %>%
+  add_sig_flag("beta_inter_mean", "beta_inter_lower", "beta_inter_upper", "sig_inter")
+
+summary_table_full <- summary_table_full %>%
+  left_join(inter_summary, by = "latin_name")
+
 summary_table_final <- summary_table_full %>%
-	mutate(
-		`β Forest cover`     = format_estimate(beta_mean, beta_lower, beta_upper, sig_forest),
-		`β Fragmentation`    = format_estimate(beta_frag_mean, beta_frag_lower, beta_frag_upper, sig_frag),
-	) %>%
-	select(
-		`Common name` = common_name,
-		`Latin name` = latin_name,
-		`Detections` = n_captures,
-		`Stations` = n_stations,
-		`Capture rate` = capture_rate,
-		`Naïve Ψ` = naive_psi,
-		`Modelled Ψ` = mean_psi,
-		`Naïve p` = naive_p,
-		`β Forest cover`,
-		`β Fragmentation`)
+  mutate(
+    `β Forest cover`     = format_estimate(beta_mean, beta_lower, beta_upper, sig_forest),
+    `β Fragmentation`    = format_estimate(beta_frag_mean, beta_frag_lower, beta_frag_upper, sig_frag),
+    `β Interaction`      = format_estimate(beta_inter_mean, beta_inter_lower, beta_inter_upper, sig_inter)
+  ) %>%
+  select(
+    `Common name` = common_name,
+    `Latin name` = latin_name,
+    `Detections` = n_captures,
+    `Stations` = n_stations,
+    `Capture rate` = capture_rate,
+    `Naïve Ψ` = naive_psi,
+    `Modelled Ψ` = mean_psi,
+    `Naïve p` = naive_p,
+    `β Forest cover`,
+    `β Fragmentation`,
+    `β Interaction`
+  )
 
 write_csv(summary_table_final, file = "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/summary_table1.csv")

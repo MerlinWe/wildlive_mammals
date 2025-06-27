@@ -11,6 +11,8 @@ library(broom)
 library(scales)
 library(scico)
 library(brms)
+library(hrbrthemes)
+library(ggthemes)
 library(geometry)
 library(ggridges)
 library(tidybayes)
@@ -19,8 +21,9 @@ library(tidyverse)
 select <- dplyr::select
 recode <- dplyr::recode
 
-export = FALSE # Export plots?
+export = TRUE # Export plots?
 model_all = FALSE # fit all models?
+clean = FALSE # clean output in between? 
 
 # read input data
 captures <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
@@ -258,8 +261,6 @@ if (model_all) {
 
 summary(ms_model, level = "community")
 summary(ms_model, level = "species")
-summary(ms_model, level = "community")$beta.comm
-summary(ms_model, level = "species")$beta
 psi <- fitted(ms_model)
 summary(psi)
 
@@ -353,6 +354,140 @@ if (export) {
   write_csv(diagnostics_clean, "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/model_diagnostics.csv")
 }
 
+# ----- Community level effects 
+
+# Update the community-level effect plot as well
+beta_comm <- ms_model$beta.comm.samples %>%
+  as_tibble() %>%
+  pivot_longer(names_to = "term", values_to = "value", cols = everything()) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(term = dplyr::recode(term,
+                              "edge_density_z" = "Edge Density",
+                              "treecover_z" = "Tree Cover",
+                              "treecover_z:edge_density_z" = "Interaction"
+  ),
+  term = factor(term, levels = c("Tree Cover", "Edge Density", "Interaction")))
+
+p_comm <- ggplot(beta_comm, aes(x = value, y = fct_rev(term), fill = term)) +
+  stat_halfeye(.width = c(0.5, 0.8, 0.95), 
+               point_interval = median_qi, 
+               slab_alpha = 0.5,  # softer fill
+               fill_type = "gradient") +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4) +
+  scale_fill_manual(values = c("darkgreen", "blue4", "cyan4")) +
+  labs(x = "Community-level effect size (posterior median ± 95% credible interval)", y = NULL) +
+  theme_few(base_size = 8) +
+  theme(
+    strip.text = element_text(face = "italic", size = 8, hjust = 0),
+    axis.text.y = element_text(size = 8),
+    axis.title.x = element_text(hjust = 1, size = 8),  
+    legend.position = "none",
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    strip.background = element_blank()
+  )
+
+
+# Check among species variance 
+beta_draws_df <- as.data.frame(ms_model$beta.samples) %>%
+  rowid_to_column("iteration") %>%
+  pivot_longer(-iteration, names_to = "term", values_to = "value") %>%
+  separate(term, into = c("covariate", "species"), sep = "-", extra = "merge")
+
+beta_var_df <- beta_draws_df %>%
+  filter(covariate != "(Intercept)") %>%
+  group_by(iteration, covariate) %>%
+  summarise(among_species_var = var(value), .groups = "drop")
+
+beta_var_df %>%
+  group_by(covariate) %>%
+  summarise(
+    mean = mean(among_species_var),
+    `2.5%` = quantile(among_species_var, 0.025),
+    `97.5%` = quantile(among_species_var, 0.975)
+  )
+
+beta_var_df %>%
+  mutate(covariate = recode(covariate,
+                            "treecover_z" = "Tree Cover",
+                            "edge_density_z" = "Edge Density",
+                            "treecover_z:edge_density_z" = "Interaction"),
+         covariate = factor(covariate, levels = c("Tree Cover", "Edge Density", "Interaction"))) %>%
+  ggplot(aes(x = among_species_var, y = fct_rev(covariate), fill = covariate)) +
+  stat_halfeye(.width = c(0.66, 0.95), slab_alpha = 0.6) +
+  scale_fill_manual(values = c("darkgreen", "blue4", "cyan4")) +
+  labs(
+    title = "Among-species variance in responses",
+    x = expression("Posterior variance of " * beta), y = NULL, fill = NULL
+  ) +
+  theme_linedraw() +
+  theme(
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(hjust = 1),
+    legend.position = "none",
+    plot.title = element_text(face = "bold", hjust = 0),
+    plot.margin = margin(t = 5, r = 10, b = 0, l = 10),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    strip.background = element_blank(),
+    panel.grid = element_blank())
+
+p_species <- as_tibble(ms_model$beta.samples) %>%
+  pivot_longer(cols = everything(),
+               names_to = "param",
+               values_to = "value") %>%
+  separate(param, into = c("parameter", "species"), sep = "-", extra = "merge") %>%
+  # Filter to focus species
+  filter(species %in% c("cerdocyon_thous",
+                        "dasyprocta_punctata",
+                        "eira_barbara",
+                        "leopardus_pardalis",
+                        "panthera_onca",
+                        "pecari_tajacu",
+                        "puma_concolor",
+                        "tapirus_terrestris")) %>%
+  filter(parameter != "(Intercept)") %>%
+  mutate(
+    parameter = recode(parameter,
+                       treecover_z = "Tree\nCover",
+                       edge_density_z = "Edge\nDensity",
+                       `treecover_z:edge_density_z` = "Interaction")
+  ) %>%
+  mutate(
+    species = str_replace_all(species, "_", " "),
+    species = str_to_lower(species),
+    species = str_replace(species, "^(\\w+)", ~ str_to_title(.x))
+  ) %>%
+  mutate(parameter = factor(parameter, levels = c("Tree\nCover", "Edge\nDensity", "Interaction"))) %>%
+  mutate(species = recode(species,
+                          "Cerdocyon thous" = "Cerdocyon\nthous",
+                          "Dasyprocta punctata" = "Dasyprocta\npunctata",
+                          "Eira barbara" = "Eira barbara",
+                          "Leopardus pardalis" = "Leopardus\npardalis",
+                          "Panthera onca" = "Panthera onca",
+                          "Pecari tajacu" = "Pecari tajacu",
+                          "Puma concolor" = "Puma concolor",
+                          "Tapirus terrestris" = "Tapirus\nterrestris"
+                          )) %>%
+  
+  ggplot(aes(x = value, y = fct_rev(parameter), fill = parameter)) +
+  stat_halfeye(.width = c(0.66, 0.95), slab_alpha = 0.6, linewidth = 0.5, point_size = .6) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4) +
+  facet_wrap(~ species, nrow = 2, ncol = 4) + 
+  scale_fill_manual(values = c("darkgreen", "blue4", "cyan4")) +
+  labs(
+    x = "Species-level effect size (posterior median ± 95% credible interval)", y = NULL, fill = NULL) +
+  theme_few(base_size = 8) +
+  theme(
+    strip.text = element_text(face = "italic", size = 8, hjust = 0),
+    axis.text.y = element_text(size = 8),
+    axis.title.x = element_text(hjust = 1, size = 8),  
+    legend.position = "none",
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    strip.background = element_blank()
+  )
+
 # ----- Trait Filtering ----- 
 
 # Prepare posterior summaries and join with trait data
@@ -441,171 +576,124 @@ bayes_results <- pmap_dfr(
                        `treecover_z:edge_density_z` = "Interaction")
   )
 
+# Get Bayesian r squared values 
+bayes_rsq <- bayes_trait_models %>%
+  mutate(r2 = map_dbl(model, ~ brms::bayes_R2(.x)[1])) %>%
+  select(cov, trait, r2) %>%
+  mutate(r2_label = paste0("Bayes R² = ", round(r2, 2))) %>%
+  transmute(
+    trait = trait,
+    covariate = case_when(
+      cov == "treecover_z" ~ "Tree Cover",
+      cov == "edge_density_z" ~ "Edge Density",
+      cov == "treecover_z:edge_density_z" ~ "Interaction"
+    ),
+    r2_label = paste0("R² = ", round(r2, 2))
+  ) %>%
+  mutate(
+    covariate_label = factor(covariate, levels = c("Tree Cover", "Edge Density", "Interaction")),
+    trait_label = dplyr::recode(trait,
+                                log_mass = "Body\nmass",
+                                log_range = "Homerange\nsize",
+                                diet_breadth = "Diet\nbreadth",
+                                activity_cycle_coded = "Diurnality",
+                                habitat_breadth_coded = "Habitat\nbreadth"
+    ),
+    trait_label_r2 = paste0(trait_label, "\n", r2_label)
+  )
 
-# --- Build plot ---
-
-# Update the community-level effect plot as well
-beta_comm <- ms_model$beta.comm.samples %>%
-  summary() %>%
-  {
-    bind_cols(
-      as.data.frame(.$statistics) %>% select(Mean = Mean),
-      as.data.frame(.$quantiles) %>% select(`2.5%`, `97.5%`)
-    )
-  } %>%
-  rownames_to_column("term") %>%
-  filter(term != "(Intercept)") %>%
-  mutate(term = dplyr::recode(term,
-                              "edge_density_z" = "Edge Density",
-                              "treecover_z" = "Forest Cover",
-                              "treecover_z:edge_density_z" = "Interaction"
-  )) %>%
-  mutate(sig_label = ifelse(`2.5%` > 0 | `97.5%` < 0, "*", ""))
-
-beta_comm$term <- factor(beta_comm$term,
-                         levels = c("Forest Cover", "Edge Density", "Interaction")
-)
-
-# Summarize community effects (no trait filtering)
-comm_plot_data <- beta_comm %>%
-  rownames_to_column("covariate") %>%
-  filter(covariate != "(Intercept)") %>%
-  mutate(term = dplyr::recode(term,
-                            "Forest Cover" = "Treecover",
-                            "Edge Density" = "Edge Density",
-                            "Interaction" = "Interaction"))
-
-theme_set(theme_bw(base_family = "sans"))
-
-comm_plot <- ggplot(comm_plot_data, aes(x = term, y = Mean, ymin = `2.5%`, ymax = `97.5%`)) +
-  geom_pointrange(aes(color = covariate), size = 1.2) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  labs(title = "A. Community-level effects",
-       x = NULL, y = "Effect size\n(logit scale)") +
-  scale_color_viridis_d(option = "magma", end = 0.8) +
-  theme_classic(base_size = 14) +
-  theme(axis.text.x = element_text(size = 8),
-      axis.text.y = element_text(size = 8),
-      axis.title = element_text(size = 10),
-      plot.title = element_text(size = 12),
-      legend.position = "none")
-
-# ----- Trait filtering plots -----
-
-# Only keep the trait slopes, not the intercepts
-trait_slopes <- bayes_results %>%
+trait_draws <- bayes_results %>%
   filter(.variable != "b_Intercept") %>%
-  # Summarize posterior draws per trait-covariate
-  group_by(covariate, trait_label) %>%
-  mean_qi(.value, .width = 0.95) %>%
-  ungroup()
+  mutate(
+    covariate = fct_relevel(covariate, "Forestcover", "Edge Density", "Interaction"),
+    trait_label = dplyr::recode(trait,
+                                log_mass = "Body\nmass",
+                                log_range = "Homerange\nsize",
+                                diet_breadth = "Diet\nbreadth",
+                                activity_cycle_coded = "Diurnality",
+                                habitat_breadth_coded = "Habitat\nbreadth"),
+    covariate_label = recode(covariate,
+                             "Forestcover" = "Tree Cover",
+                             "Edge Density" = "Edge Density",
+                             "Interaction" = "Interaction")
+  ) %>%
+  mutate(
+    covariate_label = factor(covariate_label, levels = c("Tree Cover", "Edge Density", "Interaction")),
+    trait_label = factor(trait_label, levels = c("Body\nmass", "Homerange\nsize", "Diet\nbreadth", "Diurnality", "Habitat\nbreadth"))
+  ) %>%
+  left_join(bayes_rsq %>% 
+              select(trait_label, covariate_label, trait_label_r2),
+            by = c("trait_label", "covariate_label")) 
 
-traits_interaction <- trait_slopes %>%
-  filter(covariate == "Interaction") %>%
-  ggplot(aes(x = trait_label, y = .value, ymin = .lower, ymax = .upper, color = trait_label)) +
-  geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  scale_color_viridis_d(option = "viridis", end = 0.95) +
-  labs(title = "B3. Interaction",
-       x = NULL, y = NULL) +
-  theme_classic(base_size = 14) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
-        axis.text.y = element_text(size = 10),
-        axis.title = element_text(size = 10),
-        plot.title = element_text(size = 10, hjust = 0.5),
-        legend.position = "none")
+r2_annot <- bayes_rsq %>%
+  left_join(
+    trait_draws %>%
+      group_by(trait_label, covariate_label) %>%
+      summarise(median_x = median(.value), .groups = "drop"),
+    by = c("trait_label", "covariate_label"))
 
-# Tree cover trait plot
-traits_treecover <- trait_slopes %>%
-  filter(covariate == "Forestcover") %>%
-  ggplot(aes(x = trait_label, y = .value, ymin = .lower, ymax = .upper, color = trait_label)) +
-  geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  scale_color_viridis_d(option = "viridis", end = 0.95) +
-  labs(title = "B1. Tree Cover",
-       x = NULL, y = "Trait–Environment Slope\n(posterior mean ± 95% CI)") +
-  theme_classic(base_size = 14) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
-        axis.text.y = element_text(size = 8),
-        axis.title = element_text(size = 10),
-        plot.title = element_text(size = 10, hjust = 0.5),
-        legend.position = "none")
+# Trait filtering
+p_traits <- ggplot(trait_draws, aes(x = .value, y = fct_rev(trait_label), fill = trait_label)) +
+  stat_halfeye(.width = c(0.66, 0.95), slab_alpha = 0.6, fill_type = "gradient") +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4) +
+  facet_wrap(~ covariate_label, nrow = 1, strip.position = "top") +
+  scale_fill_viridis_d(option = "viridis", end = 0.95) +
+  labs(
+    x = "Trait–Environment slope (posterior median ± 95% credible interval)",
+    y = NULL
+  ) +
+  # R² annotation
+  geom_label(
+    data = r2_annot,
+    aes(x = median_x, y = fct_rev(trait_label), label = r2_label),
+    inherit.aes = FALSE,
+    vjust = 1.5,           
+    size = 2.5,
+    label.size = NA,       
+    fill = "white",       
+    alpha = .9,           
+    label.padding = unit(0.15, "lines"), 
+    fontface = "italic"
+  ) +
+  theme_few(base_size = 8) +
+  theme(
+    strip.text = element_text(size = 8),
+    axis.text.y = element_text(size = 8),
+    axis.title.x = element_text(hjust = 1, size = 8),  
+    legend.position = "none",
+    plot.margin = margin(t = 5, r = 20, b = 5, l = 10),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    strip.background = element_blank()
+  )
 
-# Edge density trait plot
-traits_edge <- trait_slopes %>%
-  filter(covariate == "Edge Density") %>%
-  ggplot(aes(x = trait_label, y = .value, ymin = .lower, ymax = .upper, color = trait_label)) +
-  geom_pointrange(position = position_dodge(width = 0.5), size = 0.8) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  scale_color_viridis_d(option = "viridis", end = 0.95) +
-  labs(title = "B2. Edge Density",
-       x = NULL, y = NULL) +
-  theme_classic(base_size = 14) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
-        axis.text.y = element_text(size = 10),
-        axis.title = element_text(size = 10),
-        plot.title = element_text(size = 10, hjust = 0.5),
-        legend.position = "none")
-
-# Adjust all trait plots to same y scale
-trait_ylim <- range(trait_slopes$.lower, trait_slopes$.upper)
-traits_treecover <- traits_treecover + coord_cartesian(ylim = trait_ylim)
-traits_edge <- traits_edge + coord_cartesian(ylim = trait_ylim)
-traits_interaction <- traits_interaction + coord_cartesian(ylim = trait_ylim)
-trait_ylim <- range(trait_slopes$.lower, trait_slopes$.upper)
-traits_treecover <- traits_treecover + coord_cartesian(ylim = trait_ylim)
-traits_edge <- traits_edge + coord_cartesian(ylim = trait_ylim)
-traits_interaction <- traits_interaction + coord_cartesian(ylim = trait_ylim)
-
-# Assemble final figure with heading above trait plots
-trait_heading <-  wrap_elements(
-  grid::textGrob("B. Trait filtering", 
-                 gp = grid::gpar(fontsize = 12), 
-                 just = "left", 
-                 x = unit(0, "npc")))
-
-
-final_plot <- comm_plot / 
-  trait_heading / 
-  (traits_treecover | traits_edge | traits_interaction) +
-  plot_layout(heights = c(1, 0.2, 1))
+# Build fig2 as compound figure with a. labeling
+fig2 <- (((p_comm / p_species) + plot_layout(heights = c(1, 1.6))) | p_traits) +
+  plot_layout(widths = c(1, 1.2)) +
+  plot_annotation(tag_levels = 'a', tag_prefix = "", tag_suffix = ".") &
+  theme(plot.tag = element_text(size = 13))
 
 if (export) {
   
+  fig2 # check plot
+  
   # Figure 2
   ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig2.png",
-         final_plot,
-         width = 150,
-         height = 130,
+         fig2,
+         width = 250,
+         height = 170,
          units = "mm",
          dpi = 600)
 }
 
-# Check probabilities of positive effects
-bayes_results %>%
-  filter(.variable != "b_Intercept") %>%
-  group_by(covariate, trait_label) %>%
-  summarise(prob_positive = mean(.value > 0)) %>%
-  arrange(desc(prob_positive))
-
-# Posteriour Distributions of trait slopes
-bayes_results %>%
-  filter(.variable != "b_Intercept") %>%
-  mutate(
-    trait_label = factor(trait_label, levels = c("Body mass", "Home range size", "Diet breadth", "Diurnality", "Habitat breadth"))
-  ) %>%
-  ggplot(aes(x = .value, y = trait_label, fill = covariate)) +
-  geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  scale_fill_viridis_d(option = "magma", end = 0.8) +
-  labs(
-    x = "Posterior slope estimate",
-    y = NULL,
-    title = "Posterior distributions of trait slopes by covariate"
-  ) +
-  facet_wrap(~covariate) +
-  theme_bw() +
-  theme(legend.position = "none")
+if (clean) {
+  
+  #Clean environment
+  rm(bayes_rsq, beta_ci, beta_comm, beta_df, beta_draws_df, beta_sds, beta_summary, beta_stats,
+     beta_var_df, diagnostics_clean, diagnostics_table, psi, r2_annot, trait_draws,
+     beta_samples, ess_filtered, ess_vec, param_names, rhat_filtered, rhat_vec,
+     p_comm, p_species, p_traits)
+}
 
 ## ========== PDP Analysis ==========
 
@@ -622,7 +710,8 @@ sd_edgedens <- sd(site_covs$edge_density_forest, na.rm = TRUE)
 tree_seq <- seq(min(site_covs$treecover, na.rm = TRUE), max(site_covs$treecover, na.rm = TRUE), length.out = 50)
 edge_seq <- seq(min(site_covs$edge_density_forest, na.rm = TRUE), max(site_covs$edge_density_forest, na.rm = TRUE), length.out = 50)
 
-# ----- Panel A1: Community surface -----
+# ----- Community surface -----
+
 pdp_grid <- expand.grid(treecover = tree_seq, edge_density_forest = edge_seq) %>%
   mutate(
     treecover_z = scale_cov(treecover, mean_treecover, sd_treecover),
@@ -632,7 +721,7 @@ pdp_grid <- expand.grid(treecover = tree_seq, edge_density_forest = edge_seq) %>
 X.0 <- model.matrix(~ treecover_z * edge_density_z, data = pdp_grid)
 pred <- predict(ms_model, X.0 = X.0, type = "occupancy", ignore.RE = FALSE)
 
-panel_a1_data <- map_dfr(seq_len(nrow(pdp_grid)), function(i) {
+comm_occ <- map_dfr(seq_len(nrow(pdp_grid)), function(i) {
   psi_samples <- pred$psi.0.samples[, , i]
   row_mean <- rowMeans(psi_samples)
   tibble(
@@ -649,52 +738,28 @@ hull_pts <- site_covs %>%
   as.matrix() %>%
   convhulln(return.non.triangulated.facets = TRUE)
 
-inside_hull <- inhulln(hull_pts, as.matrix(panel_a1_data[, c("treecover", "edge_density_forest")]))
-panel_a1_data$inside_hull <- inside_hull
+inside_hull <- inhulln(hull_pts, as.matrix(comm_occ[, c("treecover", "edge_density_forest")]))
+comm_occ$inside_hull <- inside_hull
 
-panel_a1 <- ggplot(panel_a1_data %>% filter(inside_hull), 
+p_comm <- ggplot(comm_occ %>% filter(inside_hull), 
                    aes(x = treecover, y = edge_density_forest, fill = mean)) +
   geom_raster(alpha = 0.85) +
-  scale_fill_scico(name = NULL, palette = "cork", midpoint = median(panel_a1_data$mean)) +
-  labs(title = "A1. Community occupancy", x = "Forest cover (%)", y = "Edge density (m/ha)") +
-  theme_classic(base_size = 13) +
-  theme(legend.position = c(0.1, 0.85))
+  scale_fill_scico(name = "Est. Community-level\nOccupancy", palette = "cork", midpoint = median(comm_occ$mean)) +
+  labs(x = "Forest cover (%)", y = "Edge density (m/ha)") +
+  theme_few(base_size = 6) +
+  theme(
+    strip.text = element_text(size = 6),
+    axis.text.y = element_text(size = 6),
+    axis.title.x = element_text(size = 6),  
+    legend.position = "bottom",
+    plot.margin = margin(t = 5, r = 20, b = 5, l = 10),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    strip.background = element_blank()
+  )
 
-# ----- Panel A2: Interaction PDP -----
-edge_q <- quantile(site_covs$edge_density_forest, c(0.25, 0.75), na.rm = TRUE)
+# ----- Home Range Size Filtering -----
 
-panel_a2_data <- map_dfr(edge_q, function(ed) {
-  df <- tibble(treecover = tree_seq, edge_density_forest = ed) %>%
-    mutate(
-      treecover_z = scale_cov(treecover, mean_treecover, sd_treecover),
-      edge_density_z = scale_cov(edge_density_forest, mean_edgedens, sd_edgedens)
-    )
-  X.0 <- model.matrix(~ treecover_z * edge_density_z, data = df)
-  pred <- predict(ms_model, X.0 = X.0, type = "occupancy", ignore.RE = FALSE)
-  
-  map_dfr(seq_len(nrow(df)), function(i) {
-    psi_samples <- pred$psi.0.samples[, , i]
-    tibble(
-      treecover = df$treecover[i],
-      edge_density_forest = ed,
-      mean = mean(rowMeans(psi_samples)),
-      lower = quantile(rowMeans(psi_samples), 0.025),
-      upper = quantile(rowMeans(psi_samples), 0.975)
-    )
-  })
-}) %>%
-  mutate(edge_class = factor(edge_density_forest, labels = c("Low edge density", "High edge density")))
-
-panel_a2 <- ggplot(panel_a2_data, aes(x = treecover, y = mean, color = edge_class, fill = edge_class)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.3, color = NA) +
-  geom_line(size = 1) +
-  scale_color_manual(values = c("steelblue4", "firebrick")) +
-  scale_fill_manual(values = c("steelblue4", "firebrick")) +
-  labs(title = "A2. Tree cover × fragmentation", x = "Forest cover (%)", y = "Community occupancy", color = NULL, fill = NULL) +
-  theme_classic(base_size = 13) +
-  theme(legend.position = c(.85, .1))
-
-# ----- Trait-filtered panels (generic) -----
 trait_panel <- function(species_group, label, var_name) {
   pdp_data <- tibble(
     treecover = tree_seq,
@@ -727,38 +792,42 @@ trait_panel <- function(species_group, label, var_name) {
 
 # Panel B: Home range
 hr_quant <- quantile(species_traits$home_range_km2, c(0.25, 0.75), na.rm = TRUE)
-panel_b_data <- bind_rows(
+hr_occ <- bind_rows(
   trait_panel(species_traits$accepted_bin[species_traits$home_range_km2 <= hr_quant[1]], "Small home range"),
   trait_panel(species_traits$accepted_bin[species_traits$home_range_km2 >= hr_quant[2]], "Large home range")
 )
 
-panel_b <- ggplot(panel_b_data, aes(x = treecover, y = mean, color = group, fill = group)) +
+p_hr <- ggplot(hr_occ, aes(x = treecover, y = mean, color = group, fill = group)) +
   geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.3, color = NA) +
   geom_line(size = 1) +
-  scale_color_manual(values = c("darkgreen", "goldenrod"), name = NULL) +
-  scale_fill_manual(values = c("darkgreen", "goldenrod"), name = NULL) +
-  labs(title = "B. Trait filtering (Home range)", x = "Forest cover (%)", y = "Predicted occupancy") +
-  theme_classic(base_size = 13) +
-  theme(legend.position = "top")
+  scale_color_manual(values = c("darkgreen", "goldenrod"), name = "Trait-Filtering") +
+  scale_fill_manual(values = c("darkgreen", "goldenrod"), name = "Trait-Filtering") +
+  labs(x = "Forest cover (%)", y = "Predicted occupancy") +
+  theme_few(base_size = 6) +
+  theme(
+    strip.text = element_text(size = 6),
+    axis.text.y = element_text(size = 6),
+    axis.title.x = element_text(size = 6),  
+    legend.position = "bottom",
+    plot.margin = margin(t = 5, r = 20, b = 5, l = 10),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    strip.background = element_blank()
+  )
 
-# Panel C: Body mass
-mass_quant <- quantile(species_traits$adult_body_mass_g, c(0.25, 0.75), na.rm = TRUE)
-panel_c_data <- bind_rows(
-  trait_panel(species_traits$accepted_bin[species_traits$adult_body_mass_g <= mass_quant[1]], "Small body size"),
-  trait_panel(species_traits$accepted_bin[species_traits$adult_body_mass_g >= mass_quant[2]], "Large body size")
-)
+fig3 <- (p_comm | p_hr) +
+  plot_annotation(tag_levels = 'a', tag_prefix = "", tag_suffix = ".") &
+  theme(plot.tag = element_text(size = 10))
 
-panel_c <- ggplot(panel_c_data, aes(x = treecover, y = mean, color = group, fill = group)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.3, color = NA) +
-  geom_line(size = 1) +
-  scale_color_manual(values = c("darkgreen", "goldenrod"), name = NULL) +
-  scale_fill_manual(values = c("darkgreen", "goldenrod"), name = NULL) +
-  labs(title = "C. Trait filtering (Body size)", x = "Forest cover (%)", y = "Predicted occupancy") +
-  theme_classic(base_size = 13) +
-  theme(legend.position = "top")
-
-# ----- Combine all panels -----
-final_fig <- (panel_a1 | panel_a2) / (panel_b | panel_c)
-final_fig
-
-
+if (export) {
+  
+  fig3 # check plot
+  
+  # Figure 2
+  ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig3.png",
+         fig3,
+         width = 180,
+         height = 100,
+         units = "mm",
+         dpi = 400)
+}

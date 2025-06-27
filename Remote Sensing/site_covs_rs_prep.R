@@ -76,8 +76,9 @@ ndvi_means <- map(years, function(year) {
       
       # Extract sensing date (assumed in folder name or filename)
       sensing_date <- NA
-      file_name <- basename(b04)
-      date_match <- str_extract(file_name, "\\d{4}-\\d{2}-\\d{2}")
+      file_name_04 <- basename(b04)
+      file_name_08 <- basename(b08)
+      date_match <- str_extract(file_name_04, "\\d{4}-\\d{2}-\\d{2}")
       sensing_date <- if (!is.na(date_match)) lubridate::ymd(date_match) else NA
       
       if (!is.na(date_match)) {
@@ -89,7 +90,8 @@ ndvi_means <- map(years, function(year) {
       metadata_rows[[length(metadata_rows) + 1]] <- tibble(
         year = year,
         subdir = subdir,
-        b04_file = file_name,
+        b04_file = file_name_04,
+        b08_file = file_name_08,
         sensing_date = sensing_date
       )
     } else {

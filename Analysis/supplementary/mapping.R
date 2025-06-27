@@ -43,6 +43,37 @@ cov_long <- covariates %>%
                     edge_density_forest = "Edge Density")
   )
 
+cov_long %>%
+  group_by(Metric) %>%
+  mutate(z_value = scale(Value)[, 1]) %>%
+  ungroup() %>%
+  ggplot(aes(x = year, y = z_value, color = Metric, group = interaction(station, Metric))) +
+  geom_line(size = 0.8) +
+  facet_wrap(~ station, scales = "free_y", ncol = 3, nrow = 7) +
+  scale_color_manual(values = c("forestgreen", "goldenrod"),
+                     labels = c("Forest cover", "Edge density"),
+                     name = "Metric") +
+  labs(x = NULL, y = "Z-transformed value") +
+  theme_few(base_size = 12) +
+  theme(
+    strip.text = element_text(size = 12),
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(hjust = 1, size = 10, angle = 45),  
+    legend.position = "top",
+    plot.margin = margin(t = 5, r = 20, b = 5, l = 10),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    strip.background = element_blank()
+  )
+
+ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/supp_4.png",
+       last_plot(),
+       width = 200,
+       height = 250,
+       units = "mm",
+       dpi = 600,
+       bg = "white")
+
 # Covariate changes 2017–2023
 covariate_changes <- covariates %>%
   filter(year %in% c(2017, 2023)) %>%
@@ -73,6 +104,9 @@ covariate_changes %>%
 # Station points
 stations <- st_transform(station_buffer_1500, crs = 32720)
 
+
+
+
 prep_ndvi_for_plot <- function(ndvi_raster) {
   reclass_matrix <- matrix(c(-Inf, 0.64, 0, 0.64, Inf, 1), ncol = 3, byrow = TRUE)
   rc <- classify(ndvi_raster, rcl = reclass_matrix)
@@ -99,7 +133,7 @@ p1 <- basemap_2017_df %>%
   coord_sf(crs = 32720, expand = FALSE) +
   theme_void(base_size = 11) +
   labs(title = "2017") +
-  theme(legend.position = "top")
+  theme(legend.position = "bottom")
 
 p2 <- basemap_2023_df %>%
   ggplot() +
@@ -109,10 +143,18 @@ p2 <- basemap_2023_df %>%
   coord_sf(crs = 32720, expand = FALSE) +
   theme_void(base_size = 11) +
   labs(title = "2023") +
-  theme(legend.position = "none")
+  theme(legend.position = "bottom")
 
 
-final_map <- p1 / p2 + 
-  plot_layout(guides = "collect") & 
-  theme(legend.position = "top")
+final_map <- (p1 + plot_spacer() + p2) +
+  plot_layout(ncol = 3, widths = c(1, 0.05, 1), guides = "collect") &
+  theme(legend.position = "bottom")
+
+# Figure 2
+ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1.png",
+       last_plot(),
+       width = 180,
+       height = 80,
+       units = "mm",
+       dpi = 600)
 
