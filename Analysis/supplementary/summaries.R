@@ -97,7 +97,7 @@ pdp_habitat <- pdp_summary_for_trait(
 
 
 
-Function to extract PDP summaries for a group
+#Function to extract PDP summaries for a group
 summarize_pdp <- function(data, group_name) {
   group_data <- data %>% filter(group == group_name)
   

@@ -21,7 +21,7 @@ library(tidyverse)
 select <- dplyr::select
 recode <- dplyr::recode
 
-export = TRUE # Export plots?
+export = FALSE # Export plots?
 model_all = FALSE # fit all models?
 clean = FALSE # clean output in between? 
 
@@ -745,7 +745,7 @@ p_comm <- ggplot(comm_occ %>% filter(inside_hull),
                    aes(x = treecover, y = edge_density_forest, fill = mean)) +
   geom_raster(alpha = 0.85) +
   scale_fill_scico(name = "Est. Community-level\nOccupancy", palette = "cork", midpoint = median(comm_occ$mean)) +
-  labs(x = "Forest cover (%)", y = "Edge density (m/ha)") +
+  labs(x = "Tree cover (%)", y = "Edge density (m/ha)") +
   theme_few(base_size = 6) +
   theme(
     strip.text = element_text(size = 6),
@@ -802,7 +802,7 @@ p_hr <- ggplot(hr_occ, aes(x = treecover, y = mean, color = group, fill = group)
   geom_line(size = 1) +
   scale_color_manual(values = c("darkgreen", "goldenrod"), name = "Trait-Filtering") +
   scale_fill_manual(values = c("darkgreen", "goldenrod"), name = "Trait-Filtering") +
-  labs(x = "Forest cover (%)", y = "Predicted occupancy") +
+  labs(x = "Tree cover (%)", y = "Predicted occupancy") +
   theme_few(base_size = 6) +
   theme(
     strip.text = element_text(size = 6),

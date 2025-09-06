@@ -3,10 +3,16 @@
 rm(list = ls())
 library(terra)
 library(sf)
+library(ggthemes)
 library(tidyverse)
 library(cowplot)
 library(gtable)
+library(stringr)
+library(patchwork)
 library(ggspatial)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
 
 # read input data
 captures <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
@@ -89,6 +95,8 @@ covariate_changes %>%
   summarise(
     mean = mean(delta_treecover, na.rm = TRUE),
     sd = sd(delta_treecover, na.rm = TRUE),
+    min = min(delta_treecover, na.rm = TRUE),
+    max = max(delta_treecover, na.rm = TRUE),
     loss = sum(delta_treecover < 0, na.rm = TRUE),
     gain = sum(delta_treecover > 0, na.rm = TRUE),
     unchanged = sum(delta_treecover == 0, na.rm = TRUE))
@@ -103,6 +111,14 @@ covariate_changes %>%
 
 # Station points
 stations <- st_transform(station_buffer_1500, crs = 32720)
+
+
+
+
+
+
+
+
 
 
 
@@ -150,7 +166,7 @@ final_map <- (p1 + plot_spacer() + p2) +
   plot_layout(ncol = 3, widths = c(1, 0.05, 1), guides = "collect") &
   theme(legend.position = "bottom")
 
-# Figure 2
+# Figure 1
 ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1.png",
        last_plot(),
        width = 180,
@@ -158,3 +174,130 @@ ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures
        units = "mm",
        dpi = 600)
 
+
+
+
+## PANEL A
+
+research_area_wgs84 <- st_transform(research_area_outline, 4326)
+study_bbox_poly <- st_as_sfc(st_bbox(research_area_wgs84), crs = 4326)
+study_centroid  <- st_centroid(research_area_wgs84)
+
+bolivia <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  filter(name == "Bolivia")
+south_america <- ne_countries(continent = "South America", 
+                              scale = "medium", returnclass = "sf")
+main_map <- ggplot() +
+  geom_sf(data = bolivia, fill = "grey95", color = "grey40", linewidth = 0.4) +
+  geom_sf(data = study_bbox_poly, fill = NA, color = "black", linewidth = 1.1) +
+  geom_sf(data = study_centroid, color = "black", size = 2) +
+  coord_sf(expand = FALSE) +
+  theme_void(base_size = 11) +
+  theme(
+    plot.title = element_text(hjust = 0, face = "bold", size = 12),
+    plot.margin = margin(6, 6, 6, 6)
+  ) +
+  annotation_scale(location = "br", text_cex = 0.5, line_width = 0.4, height = unit(0.2, "cm")) +
+  annotation_north_arrow(location = "tr", which_north = "true",
+                         style = north_arrow_fancy_orienteering(text_size = 6))
+
+panel_A <- ggdraw() +
+  draw_plot(main_map)
+panel_A
+ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_A.png", panel_A,
+       width = 95, height = 75, units = "mm", dpi = 300)
+
+
+
+
+
+## PANEL B
+plot_extent <- st_buffer(research_area_outline, 1)
+
+#  crop/mask & convert to df 
+ndvi_to_df <- function(ndvi_rast, clip_poly) {
+  ndvi_clip <- terra::mask(terra::crop(ndvi_rast, vect(clip_poly)), vect(clip_poly))
+  df <- as.data.frame(ndvi_clip, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "ndvi"
+  df
+}
+
+years_for_maps <- c("2017","2023")
+ndvi_vals <- do.call(rbind, lapply(years_for_maps, function(y) {
+  df <- ndvi_to_df(ndvi_list[[y]], plot_extent); df$year <- y; df
+}))
+ndvi_min <- quantile(ndvi_vals$ndvi, 0.01, na.rm = TRUE) # trim tails a touch
+ndvi_max <- quantile(ndvi_vals$ndvi, 0.99, na.rm = TRUE)
+
+# year for Panel B ?
+backdrop_year <- "2019"  
+ndvi_bg <- ndvi_to_df(ndvi_list[[backdrop_year]], plot_extent)
+
+buffer_edge  <- "black"
+buffer_fill  <- scales::alpha(buffer_edge, 0.12)
+
+panel_B <- ggplot() +
+  # NDVI backdrop as continuous raster, low opacity
+  geom_raster(data = ndvi_bg,
+              aes(x = x, y = y, fill = ndvi),
+              alpha = 0.35) + 
+  scale_fill_viridis_c(option = "viridis",
+                       limits = c(ndvi_min, ndvi_max),
+                       name = "NDVI") +
+  
+  # Buffers and stations on top
+  geom_sf(data = station_buffer_1500, fill = buffer_fill,
+          color = buffer_edge, linewidth = 0.5) +
+  coord_sf(crs = 32720,
+           xlim = st_bbox(plot_extent)[c("xmin","xmax")],
+           ylim = st_bbox(plot_extent)[c("ymin","ymax")],
+           expand = FALSE) +
+  
+  geom_sf(data = st_as_sf(plot_extent), fill = NA, color = "black", linewidth = 0.6) +
+  coord_sf(crs = 32720,
+           xlim = st_bbox(plot_extent)[c("xmin","xmax")],
+           ylim = st_bbox(plot_extent)[c("ymin","ymax")],
+           expand = FALSE) +
+  
+  theme_void(base_size = 11) +
+  theme(plot.title = element_text(hjust = 0, face = "bold", size = 12),
+        plot.subtitle = element_text(hjust = 0, size = 10),
+        plot.margin = margin(6, 6, 6, 6),
+        legend.position = "none")               
+
+panel_B
+
+ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_B.png", panel_B,
+       width = 95, height = 75, units = "mm", dpi = 300)
+
+
+
+
+## PANLES C & D 
+
+make_ndvi_panel <- function(year, show_legend = TRUE, title = year) {
+  df <- ndvi_to_df(ndvi_list[[year]], plot_extent)
+  p <- ggplot() +
+    geom_raster(data = df, aes(x = x, y = y, fill = ndvi), alpha = 1) +
+    scale_fill_viridis_c(option = "viridis",
+                         limits = c(ndvi_min, ndvi_max),
+                         name = "NDVI") +
+    coord_sf(crs = 32720,
+             xlim = st_bbox(plot_extent)[c("xmin","xmax")],
+             ylim = st_bbox(plot_extent)[c("ymin","ymax")],
+             expand = FALSE) +
+    labs(title = title) +
+    theme_void(base_size = 11) +
+    theme(plot.title = element_text(hjust = 0, face = "bold", size = 12),
+          plot.margin = margin(6, 6, 6, 6),
+          legend.position = if (show_legend) "right" else "none")
+  p
+}
+
+panel_C <- make_ndvi_panel("2017", show_legend = FALSE)
+panel_D <- make_ndvi_panel("2023", show_legend = FALSE)
+panel_legend <- make_ndvi_panel("2023", show_legend = TRUE)
+
+ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_C.png", panel_C, width = 95, height = 75, units = "mm", dpi = 300)
+ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_D.png", panel_D, width = 95, height = 75, units = "mm", dpi = 300)
+ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_legend.png", panel_legend, width = 95, height = 75, units = "mm", dpi = 300)
