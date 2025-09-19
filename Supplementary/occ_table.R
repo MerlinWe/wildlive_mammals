@@ -211,4 +211,4 @@ summary_table_final <- summary_table_full %>%
     `β Interaction`
   )
 
-write_csv(summary_table_final, file = "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/summary_table1.csv")
+write_csv(summary_table_final, file = "Code/Output/Tables/summary_table1.csv")

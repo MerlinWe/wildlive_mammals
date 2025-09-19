@@ -15,9 +15,9 @@ library(rnaturalearthdata)
 
 
 # read input data
-captures <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
-camtraps <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
-covariates <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/forest_covariates.csv")
+captures <- read_csv("Data/species_data.csv")
+camtraps <- read_csv("Data/camtraps_clean.csv")
+covariates <- read_csv("Data/forest_covariates.csv")
 
 # Station buffers (1500m radius)
 station_buffer_1500 <- camtraps %>%
@@ -32,8 +32,8 @@ research_area_outline <- station_buffer_1500 %>%
   st_as_sfc() %>%
   st_buffer(10000)
 
-# NDVI rasters as SpatRaster list (use terra only)
-ndvi_files <- list.files("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Remote Sensing/NDVI (Annual means)", pattern = "ndvi_20\\d{2}\\.grd$", full.names = TRUE)
+# NDVI rasters as SpatRaster list 
+ndvi_files <- list.files("Remote Sensing/NDVI (Annual means)", pattern = "ndvi_20\\d{2}\\.grd$", full.names = TRUE)
 ndvi_list <- lapply(ndvi_files, rast)
 names(ndvi_list) <- str_extract(ndvi_files, "20\\d{2}")
 
@@ -72,7 +72,7 @@ cov_long %>%
     strip.background = element_blank()
   )
 
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/supp_4.png",
+ggsave("Output/Figures/supp_4.png",
        last_plot(),
        width = 200,
        height = 250,
@@ -111,17 +111,6 @@ covariate_changes %>%
 
 # Station points
 stations <- st_transform(station_buffer_1500, crs = 32720)
-
-
-
-
-
-
-
-
-
-
-
 
 prep_ndvi_for_plot <- function(ndvi_raster) {
   reclass_matrix <- matrix(c(-Inf, 0.64, 0, 0.64, Inf, 1), ncol = 3, byrow = TRUE)
@@ -167,15 +156,12 @@ final_map <- (p1 + plot_spacer() + p2) +
   theme(legend.position = "bottom")
 
 # Figure 1
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1.png",
+ggsave("Output/Figures/fig1.png",
        last_plot(),
        width = 180,
        height = 80,
        units = "mm",
        dpi = 600)
-
-
-
 
 ## PANEL A
 
@@ -204,12 +190,8 @@ main_map <- ggplot() +
 panel_A <- ggdraw() +
   draw_plot(main_map)
 panel_A
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_A.png", panel_A,
+ggsave("Output/Figures/fig1/panel_A.png", panel_A,
        width = 95, height = 75, units = "mm", dpi = 300)
-
-
-
-
 
 ## PANEL B
 plot_extent <- st_buffer(research_area_outline, 1)
@@ -226,7 +208,7 @@ years_for_maps <- c("2017","2023")
 ndvi_vals <- do.call(rbind, lapply(years_for_maps, function(y) {
   df <- ndvi_to_df(ndvi_list[[y]], plot_extent); df$year <- y; df
 }))
-ndvi_min <- quantile(ndvi_vals$ndvi, 0.01, na.rm = TRUE) # trim tails a touch
+ndvi_min <- quantile(ndvi_vals$ndvi, 0.01, na.rm = TRUE)
 ndvi_max <- quantile(ndvi_vals$ndvi, 0.99, na.rm = TRUE)
 
 # year for Panel B ?
@@ -267,11 +249,8 @@ panel_B <- ggplot() +
 
 panel_B
 
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_B.png", panel_B,
+ggsave("Output/Figures/fig1/panel_B.png", panel_B,
        width = 95, height = 75, units = "mm", dpi = 300)
-
-
-
 
 ## PANLES C & D 
 
@@ -279,6 +258,10 @@ make_ndvi_panel <- function(year, show_legend = TRUE, title = year) {
   df <- ndvi_to_df(ndvi_list[[year]], plot_extent)
   p <- ggplot() +
     geom_raster(data = df, aes(x = x, y = y, fill = ndvi), alpha = 1) +
+    
+    geom_sf(data = station_buffer_1500, fill = NA,
+            color = buffer_edge, linewidth = 0.5) +
+    
     scale_fill_viridis_c(option = "viridis",
                          limits = c(ndvi_min, ndvi_max),
                          name = "NDVI") +
@@ -298,6 +281,6 @@ panel_C <- make_ndvi_panel("2017", show_legend = FALSE)
 panel_D <- make_ndvi_panel("2023", show_legend = FALSE)
 panel_legend <- make_ndvi_panel("2023", show_legend = TRUE)
 
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_C.png", panel_C, width = 95, height = 75, units = "mm", dpi = 300)
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_D.png", panel_D, width = 95, height = 75, units = "mm", dpi = 300)
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig1/panel_legend.png", panel_legend, width = 95, height = 75, units = "mm", dpi = 300)
+ggsave("Output/Figures/fig1/panel_C.png", panel_C, width = 95, height = 75, units = "mm", dpi = 300)
+ggsave("Output/Figures/fig1/panel_D.png", panel_D, width = 95, height = 75, units = "mm", dpi = 300)
+ggsave("Output/Figures/fig1/panel_legend.png", panel_legend, width = 95, height = 75, units = "mm", dpi = 300)

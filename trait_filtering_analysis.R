@@ -2,6 +2,8 @@
 ##### Trait-Filtered Responses of Mammal Communities to Land-Use Change in a Neotropical Dry Forest #####
 #########################################################################################################
 
+## Code for the main analysis in M. Weiss et al. (in submission) - Trait-filtered responses of mammal communities to land-use change in a neotropical dry forest
+
 rm(list = ls()); gc()
 
 library(patchwork)
@@ -26,10 +28,10 @@ model_all = FALSE # fit all models?
 clean = FALSE # clean output in between? 
 
 # read input data
-captures <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
-camtraps <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
-camop <- as.matrix(read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/camop_problem.csv"))
-covariates <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/forest_covariates.csv")
+captures <- read_csv("Data/species_data.csv")
+camtraps <- read_csv("Data/camtraps_clean.csv")
+camop <- as.matrix(read_csv("Data/camop_problem.csv"))
+covariates <- read_csv("Data/forest_covariates.csv")
 
 # ========= Data Preparation ==========
 
@@ -51,7 +53,6 @@ species <- captures %>%
   ) %>%
   # Make sure all data is identified to the species level
   filter(complete.cases(Species)) %>%
-  select(-Batch) %>%
   # Assess temporal independence - Arrange by station, name and time
   arrange(Station, accepted_bin, DateTimeOriginal) %>%
   # Calculate the time difference between consecutive captures of the same species at the same station
@@ -65,7 +66,7 @@ species <- captures %>%
 
 # Integrate pantheria traits, see which traits predict which response
 pantheria <- read.table(
-  file = "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/PanTHERIA.txt",
+  file = "Data/PanTHERIA.txt",
   header = TRUE, sep = "\t", na.strings = c("-999", "-999.00")
 ) %>%
   as_tibble() %>%
@@ -101,6 +102,7 @@ species_traits <- pantheria %>%
     terrestriality, trophic_level
   )
 
+## Home range size based on added literature records, originally not represented in PanTheria version used...
 species_traits[5,4] <- 0.02 # agouti
 species_traits[8,4] <- 0.03 # paca
 species_traits[13,4] <- 1.17 # deer
@@ -200,13 +202,19 @@ any(is.na(detection_array)) # Should return FALSE
 dimnames(detection_array)[[3]] <- paste0("Month", 1:dim(detection_array)[3])
 
 # assess correlations
-cor(site_covs$patch_density_z, site_covs$edge_density_z)
-cor(site_covs$patch_density_z, site_covs$shape_index_z)
-cor(site_covs$edge_density_z, site_covs$shape_index_z)
+r_edge  <- cor(site_covs$treecover_z, site_covs$edge_density_z,  use = "complete.obs")
+r_patch <- cor(site_covs$treecover_z, site_covs$patch_density_z, use = "complete.obs")
+r_shape <- cor(site_covs$treecover_z, site_covs$shape_index_z,   use = "complete.obs")
 
-cor(site_covs$treecover_z, site_covs$edge_density_z)
-cor(site_covs$treecover_z, site_covs$patch_density_z)
-cor(site_covs$treecover_z, site_covs$shape_index_z)
+# model meta
+model_meta <- tibble::tribble(
+  ~model,            ~covariates,                         ~uses_edge, ~uses_patch, ~uses_shape, ~interaction,
+  "Edge",            "treecover + edge_density",          TRUE,       FALSE,       FALSE,       FALSE,
+  "Patch",           "treecover + patch_density",         FALSE,      TRUE,        FALSE,       FALSE,
+  "Shape",           "treecover + shape_index",           FALSE,      FALSE,       TRUE,        FALSE,
+  "Edge + Shape",    "treecover + edge_density + shape",  TRUE,       FALSE,       TRUE,        FALSE,
+  "Edge Interaction","treecover * edge_density",          TRUE,       FALSE,       FALSE,       TRUE
+)
 
 # Define model framework 
 fit_model <- function(formula) {
@@ -251,11 +259,32 @@ if (model_all) {
   ms_model <- models[[best_model]]
   cat("Best model selected:", best_model, "with WAIC =", waic_tbl$WAIC[1], "\n")
   
-} else {
+  model_selection_tbl <- waic_tbl %>%
+    dplyr::left_join(model_meta, by = "model") %>%
+    dplyr::mutate(
+      delta_WAIC = WAIC - min(WAIC, na.rm = TRUE),
+      weight_raw = exp(-0.5 * delta_WAIC),
+      weight     = weight_raw / sum(weight_raw, na.rm = TRUE),
+      r_treecover_edge  = dplyr::if_else(uses_edge,  r_edge,  NA_real_),
+      r_treecover_patch = dplyr::if_else(uses_patch, r_patch, NA_real_),
+      r_treecover_shape = dplyr::if_else(uses_shape, r_shape, NA_real_)
+    ) %>%
+    dplyr::select(model, covariates, WAIC, delta_WAIC, weight,
+                  r_treecover_edge, r_treecover_patch, r_treecover_shape, interaction) %>%
+    dplyr::arrange(WAIC) %>%
+    dplyr::mutate(
+      dplyr::across(c(WAIC, delta_WAIC, weight,
+                      r_treecover_edge, r_treecover_patch, r_treecover_shape),
+                    ~ round(.x, 3))
+    )
   
+  print(model_selection_tbl)
+  
+} else {
   # just fit the interaction model
   ms_model <- fit_model(~ treecover_z * edge_density_z)
 }
+
 
 # ----- Check Model output -----
 
@@ -351,7 +380,7 @@ diagnostics_clean <- diagnostics_table %>%
   select(-Converged, -ESS_gt_1000)
 
 if (export) {
-  write_csv(diagnostics_clean, "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/model_diagnostics.csv")
+  write_csv(diagnostics_clean, "Output/Tables/model_diagnostics.csv")
 }
 
 # ----- Community level effects 
@@ -363,10 +392,10 @@ beta_comm <- ms_model$beta.comm.samples %>%
   filter(term != "(Intercept)") %>%
   mutate(term = dplyr::recode(term,
                               "edge_density_z" = "Edge Density",
-                              "treecover_z" = "Tree Cover",
+                              "treecover_z" = "Forest Cover",
                               "treecover_z:edge_density_z" = "Interaction"
   ),
-  term = factor(term, levels = c("Tree Cover", "Edge Density", "Interaction")))
+  term = factor(term, levels = c("Forest Cover", "Edge Density", "Interaction")))
 
 p_comm <- ggplot(beta_comm, aes(x = value, y = fct_rev(term), fill = term)) +
   stat_halfeye(.width = c(0.5, 0.8, 0.95), 
@@ -409,10 +438,10 @@ beta_var_df %>%
 
 beta_var_df %>%
   mutate(covariate = recode(covariate,
-                            "treecover_z" = "Tree Cover",
+                            "treecover_z" = "Forest Cover",
                             "edge_density_z" = "Edge Density",
                             "treecover_z:edge_density_z" = "Interaction"),
-         covariate = factor(covariate, levels = c("Tree Cover", "Edge Density", "Interaction"))) %>%
+         covariate = factor(covariate, levels = c("Forest Cover", "Edge Density", "Interaction"))) %>%
   ggplot(aes(x = among_species_var, y = fct_rev(covariate), fill = covariate)) +
   stat_halfeye(.width = c(0.66, 0.95), slab_alpha = 0.6) +
   scale_fill_manual(values = c("darkgreen", "blue4", "cyan4")) +
@@ -449,7 +478,7 @@ p_species <- as_tibble(ms_model$beta.samples) %>%
   filter(parameter != "(Intercept)") %>%
   mutate(
     parameter = recode(parameter,
-                       treecover_z = "Tree\nCover",
+                       treecover_z = "Forest\nCover",
                        edge_density_z = "Edge\nDensity",
                        `treecover_z:edge_density_z` = "Interaction")
   ) %>%
@@ -458,7 +487,7 @@ p_species <- as_tibble(ms_model$beta.samples) %>%
     species = str_to_lower(species),
     species = str_replace(species, "^(\\w+)", ~ str_to_title(.x))
   ) %>%
-  mutate(parameter = factor(parameter, levels = c("Tree\nCover", "Edge\nDensity", "Interaction"))) %>%
+  mutate(parameter = factor(parameter, levels = c("Forest\nCover", "Edge\nDensity", "Interaction"))) %>%
   mutate(species = recode(species,
                           "Cerdocyon thous" = "Cerdocyon\nthous",
                           "Dasyprocta punctata" = "Dasyprocta\npunctata",
@@ -468,7 +497,7 @@ p_species <- as_tibble(ms_model$beta.samples) %>%
                           "Pecari tajacu" = "Pecari tajacu",
                           "Puma concolor" = "Puma concolor",
                           "Tapirus terrestris" = "Tapirus\nterrestris"
-                          )) %>%
+  )) %>%
   
   ggplot(aes(x = value, y = fct_rev(parameter), fill = parameter)) +
   stat_halfeye(.width = c(0.66, 0.95), slab_alpha = 0.6, linewidth = 0.5, point_size = .6) +
@@ -565,15 +594,15 @@ bayes_results <- pmap_dfr(
 ) %>%
   mutate(
     trait_label = dplyr::recode(trait,
-                         log_mass = "Body mass",
-                         log_range = "Home range size",
-                         diet_breadth = "Diet breadth",
-                         activity_cycle_coded = "Diurnality",
-                         habitat_breadth_coded = "Habitat breadth"),
+                                log_mass = "Body mass",
+                                log_range = "Home range size",
+                                diet_breadth = "Diet breadth",
+                                activity_cycle_coded = "Diurnality",
+                                habitat_breadth_coded = "Habitat breadth"),
     covariate = dplyr::recode(cov,
-                       treecover_z = "Forestcover",
-                       edge_density_z = "Edge Density",
-                       `treecover_z:edge_density_z` = "Interaction")
+                              treecover_z = "Forest Cover",
+                              edge_density_z = "Edge Density",
+                              `treecover_z:edge_density_z` = "Interaction")
   )
 
 # Get Bayesian r squared values 
@@ -584,14 +613,14 @@ bayes_rsq <- bayes_trait_models %>%
   transmute(
     trait = trait,
     covariate = case_when(
-      cov == "treecover_z" ~ "Tree Cover",
+      cov == "treecover_z" ~ "Forest Cover",
       cov == "edge_density_z" ~ "Edge Density",
       cov == "treecover_z:edge_density_z" ~ "Interaction"
     ),
     r2_label = paste0("R² = ", round(r2, 2))
   ) %>%
   mutate(
-    covariate_label = factor(covariate, levels = c("Tree Cover", "Edge Density", "Interaction")),
+    covariate_label = factor(covariate, levels = c("Forest Cover", "Edge Density", "Interaction")),
     trait_label = dplyr::recode(trait,
                                 log_mass = "Body\nmass",
                                 log_range = "Homerange\nsize",
@@ -605,7 +634,7 @@ bayes_rsq <- bayes_trait_models %>%
 trait_draws <- bayes_results %>%
   filter(.variable != "b_Intercept") %>%
   mutate(
-    covariate = fct_relevel(covariate, "Forestcover", "Edge Density", "Interaction"),
+    covariate = fct_relevel(covariate, "Forest Cover", "Edge Density", "Interaction"),
     trait_label = dplyr::recode(trait,
                                 log_mass = "Body\nmass",
                                 log_range = "Homerange\nsize",
@@ -613,12 +642,12 @@ trait_draws <- bayes_results %>%
                                 activity_cycle_coded = "Diurnality",
                                 habitat_breadth_coded = "Habitat\nbreadth"),
     covariate_label = recode(covariate,
-                             "Forestcover" = "Tree Cover",
+                             "Forest Cover" = "Forest Cover",
                              "Edge Density" = "Edge Density",
                              "Interaction" = "Interaction")
   ) %>%
   mutate(
-    covariate_label = factor(covariate_label, levels = c("Tree Cover", "Edge Density", "Interaction")),
+    covariate_label = factor(covariate_label, levels = c("Forest Cover", "Edge Density", "Interaction")),
     trait_label = factor(trait_label, levels = c("Body\nmass", "Homerange\nsize", "Diet\nbreadth", "Diurnality", "Habitat\nbreadth"))
   ) %>%
   left_join(bayes_rsq %>% 
@@ -678,7 +707,7 @@ if (export) {
   fig2 # check plot
   
   # Figure 2
-  ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig2.png",
+  ggsave("Output/Figures/fig2.png",
          fig2,
          width = 250,
          height = 170,
@@ -742,10 +771,10 @@ inside_hull <- inhulln(hull_pts, as.matrix(comm_occ[, c("treecover", "edge_densi
 comm_occ$inside_hull <- inside_hull
 
 p_comm <- ggplot(comm_occ %>% filter(inside_hull), 
-                   aes(x = treecover, y = edge_density_forest, fill = mean)) +
+                 aes(x = treecover, y = edge_density_forest, fill = mean)) +
   geom_raster(alpha = 0.85) +
   scale_fill_scico(name = "Est. Community-level\nOccupancy", palette = "cork", midpoint = median(comm_occ$mean)) +
-  labs(x = "Tree cover (%)", y = "Edge density (m/ha)") +
+  labs(x = "Forest cover (%)", y = "Edge density (m/ha)") +
   theme_few(base_size = 6) +
   theme(
     strip.text = element_text(size = 6),
@@ -802,7 +831,7 @@ p_hr <- ggplot(hr_occ, aes(x = treecover, y = mean, color = group, fill = group)
   geom_line(size = 1) +
   scale_color_manual(values = c("darkgreen", "goldenrod"), name = "Trait-Filtering") +
   scale_fill_manual(values = c("darkgreen", "goldenrod"), name = "Trait-Filtering") +
-  labs(x = "Tree cover (%)", y = "Predicted occupancy") +
+  labs(x = "Forest cover (%)", y = "Predicted occupancy") +
   theme_few(base_size = 6) +
   theme(
     strip.text = element_text(size = 6),
@@ -824,10 +853,10 @@ if (export) {
   fig3 # check plot
   
   # Figure 2
-  ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/fig3.png",
+  ggsave("Output/Figures/fig3.tiff",
          fig3,
          width = 180,
          height = 100,
          units = "mm",
-         dpi = 400)
+         dpi = 600)
 }

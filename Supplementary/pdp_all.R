@@ -119,7 +119,7 @@ combined_traits_plot <- wrap_plots(plots, ncol = 2, guides = "collect") +
                   theme = theme(plot.title = element_text(size = 12)))
 
 
-ggsave("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Figures/supp_8.png",
+ggsave("Code/Output/Figures/supp_8.png",
        last_plot(),
        width = 220,
        height = 160,
@@ -178,4 +178,4 @@ trait_table$Threshold <- as.character(trait_table$Threshold)
 final_trait_summary <- bind_rows(trait_table, activity_table)
 
 print(final_trait_summary)
-write_csv(final_trait_summary, "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Output/Tables/trait_quantiles.csv")
+write_csv(final_trait_summary, "Output/Tables/trait_quantiles.csv")

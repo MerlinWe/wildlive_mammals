@@ -31,9 +31,6 @@ comm_occ$interaction_effect <- comm_occ$mean - comm_occ$mean_add
 # Quantify non-additivity
 summary(comm_occ$interaction_effect)
 
-
-
-
 # General PDP summary function
 pdp_summary_for_trait <- function(trait_df, pdp_fn, trait_col, lower_label = "Low", upper_label = "High", q_low = 0.25, q_high = 0.75) {
   q_vals <- quantile(trait_df[[trait_col]], probs = c(q_low, q_high), na.rm = TRUE)
