@@ -190,6 +190,7 @@ main_map <- ggplot() +
 panel_A <- ggdraw() +
   draw_plot(main_map)
 panel_A
+
 ggsave("Output/Figures/fig1/panel_A.png", panel_A,
        width = 95, height = 75, units = "mm", dpi = 300)
 
