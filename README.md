@@ -1,24 +1,30 @@
 # Trait-Filtered Responses of Mammal Communities to Land-Use Change in a Neotropical Dry Forest
 
+**ABSTRACT:** [...]
+
+**DISCLAIMER:** Given the submission status the data is not yet made public. 
+
 ## Instructions for Data Usage and Reproducibility
 
 This repository contains the data and code to reproduce the analysis of the associated publication.  
 The files are structured as follows:
 
-├── Data/
-│   ├── PanTHERIA.txt                  # Species trait data from PanTHERIA
-│   ├── bounding_boxes_before_consensus.csv  # Bounding boxes from raw images
-│   ├── camop_problem.csv              # Camera operation table
-│   ├── camtraps_clean.csv             # Camera trap metadata
-│   ├── forest_covariates.csv          # Forest metrics calculated from remote sensing
-│   └── species_data.csv               # Post-consensus species data used for modelling
+```
+├── Data/ 
+│   ├── PanTHERIA.txt                            # Species trait data from PanTHERIA
+│   ├── bounding_boxes_before_consensus.csv      # Bounding boxes from raw images
+│   ├── camop_problem.csv                        # Camera operation table
+│   ├── camtraps_clean.csv                       # Camera trap metadata
+│   ├── forest_covariates.csv                    # Forest metrics calculated from remote sensing
+│   └── species_data.csv                         # Post-consensus species data used for modelling
 │
 ├── Remote Sensing/
-│   ├── 10S_070W.tif                   # Reference raster for forest metric classification
-│   ├── NDVI (Annual means)/           # Stacked annual NDVI means
-│   └── site_covs_rs_prep.R            # R script to process remote sensing data
+│   ├── 10S_070W.tif                             # Reference raster for forest metric classification
+│   ├── NDVI (Annual means)/                     # Stacked annual NDVI means
+│   └── site_covs_rs_prep.R                      # R script to process remote sensing data
 │
-└── trait_filtering_analysis.R          # Main script for the analysis
+└── trait_filtering_analysis.R                   # Main script for the analysis
+```
 
 ### Notes
 
