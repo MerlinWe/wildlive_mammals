@@ -17,13 +17,12 @@ library(betareg)
 library(cowplot)
 
 # Set working directory
-project_root <- "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Remote Sensing"
-ndvi_base <- file.path(project_root, "NDVI")
-output_dir <- file.path(project_root, "NDVI (Annual Means)")
+ndvi_base <- file.path("Remote Sensing", "NDVI")
+output_dir <- file.path("Remote Sensing", "NDVI (Annual Means)")
 # dir_tree()
 
-camtraps <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/camtraps_clean.csv")
-species <- read_csv("/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/species_data.csv")
+camtraps <- read_csv("Data/camtraps_clean.csv")
+species <- read_csv("Data/species_data.csv")
 
 # Construct spatial mask from station buffers
 station_buffer_1500 <- camtraps %>%
@@ -143,7 +142,7 @@ par(mfrow = c(1, 1))
 ## ---------- Predict true tree cover ----------
 
 # Crop the GFW data to research extent
-trees <- treecover <- rast('/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Remote Sensing/10S_070W.tif')
+trees <- treecover <- rast('Remote Sensing/10S_070W.tif')
 crop_vect_latlon <- project(crop_vect, crs(treecover))
 
 trees <- crop(treecover, crop_vect_latlon)
@@ -304,7 +303,7 @@ treecover <- treecover_list %>%
 ## =================== Fragmentation =================== 
 
 # Stack and align NDVI and tree cover raster
-r_stack <- c(ndvi_2020, '/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Remote Sensing/10S_070W.tif' |> 
+r_stack <- c(ndvi_2020, 'Remote Sensing/10S_070W.tif' |> 
 		rast() |> 
 		project(ndvi_2020) |>  
 		terra::crop(ndvi_2020))
@@ -384,7 +383,7 @@ covariates <- treecover %>%
 	select(-predicted_mean_treecover)
 
 glimpse(covariates)
-write_csv(covariates, file = "/Users/merlin/Documents/Senckenberg/WildLive/Mammals/Code/Data/forest_covariates.csv")
+write_csv(covariates, file = "Data/forest_covariates.csv")
 
 ## Examine covariates
 covariates %>%
