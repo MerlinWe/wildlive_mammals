@@ -318,7 +318,7 @@ beta_df <- as.data.frame(summary(beta_samples)$statistics) %>%
     species     = tools::toTitleCase(gsub("_", " ", species_raw))
   )
 
-param_names <- beta_df$param  # from your previous code
+param_names <- beta_df$param
 
 # Subset by name
 rhat_filtered <- rhat_vec[param_names]
