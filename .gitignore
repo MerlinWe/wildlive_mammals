@@ -5,3 +5,4 @@
 *.docx
 *.pptx
 .Rproj.user
+.DS_Store
