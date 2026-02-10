@@ -2,7 +2,7 @@
 ##### Trait-Filtered Responses of Mammal Communities to Land-Use Change in a Neotropical Dry Forest #####
 #########################################################################################################
 
-## Code for the main analysis in M. Weiss et al. (in submission) - Trait-filtered responses of mammal communities to land-use change in a neotropical dry forest
+## Code for the main analysis in Weiss et al. (2026) - Trait-filtered responses of mammal communities to land-use change in a neotropical dry forest
 
 rm(list = ls()); gc()
 
