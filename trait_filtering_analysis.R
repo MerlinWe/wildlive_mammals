@@ -855,8 +855,8 @@ if (export) {
   # Figure 2
   ggsave("Output/Figures/fig3.tiff",
          fig3,
-         width = 180,
-         height = 100,
+         width = 130,
+         height = 70,
          units = "mm",
          dpi = 600)
 }
